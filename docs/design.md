@@ -1,12 +1,13 @@
 # cc-fido-gate — design
 
 **Date:** 2026-07-16
-**Status:** Revised after **two** full multi-model review rounds (five reviewers each, all
-unanimous REVISE; every finding folded in). The concept is affirmed by the whole panel and the
-crypto is re-verified on real hardware/binaries; what remains is (a) a small set of **platform
-facts that must be settled empirically in Task 0** before this is buildable at all, and (b)
-specifications the implementation must carry. This doc reflects round-2 folding and has **not
-yet been re-reviewed** (that would be round 3). Not APPROVED.
+**Status:** Revised after **three** full multi-model review rounds. R1 + R2 were unanimous
+REVISE; **R3 came back 4 APPROVED / 1 REVISE**, and the lone REVISE (the lock-is-not-a-real-
+security-boundary point) was independently *agreed* by two of the approvers as a wording fix +
+future-hardening path, not a blocker — so the panel consensus is **implementable, with Task 0 as
+the hard go/no-go gate.** This doc folds all R3 findings (tagged **[R3]**). The core guarantee
+(no touch → no execution) survives every round; what's left is Task 0's platform facts and a set
+of named must-fixes at policy-authoring/impl time.
 **Prior art:** Switchyard supervised-sessions **phase 2** on `feat/affirmation-relay`
 (`MobilityLabs/switchyard`, PR #194 / SYD-242) — **not on `main`**. Proven on a real key
 2026-07-16. NB: the prior-art `src/services/ssh-verify.ts` calls **bare `ssh-keygen`** and
@@ -106,19 +107,32 @@ denylist.
    (NEW-6) — via `.claude/settings.json` `env`, direnv, launch profiles, etc. Per-Bash-call
    `export` does not persist into CC's process env; confirm nothing else does. Drives how hard
    the interpreter-launch hardening must be.
+7. **Running-process integrity** [R3/pentester-New-A] — against the *shipped* binary while it
+   executes a ceremony, a same-uid `lldb -p` / `task_for_pid` attach must **fail** (else the
+   agent forces `exit 0`/`allow` with zero touches — a total bypass through none of the FIDO
+   machinery). Mitigated on default macOS (developer mode off → `task_for_pid` is auth-gated),
+   but this is a *developer's* machine, so the gate binary must ship **hardened-runtime, signed,
+   `get-task-allow` disabled** (or setuid-root). Probe that attach fails — the runtime analogue
+   of the install-time file-ownership canary.
 
-Deliverable: a report answering all six with actual commands and outputs. Only on six green
-does implementation start.
+Deliverable: a report answering all seven with actual commands and outputs. Only on seven green
+does implementation start. **Note the asymmetry [R3/codex+opus-R3-B]: a `0.1(b)=proceed` result
+is NOT a green — it *terminates* the interactive synchronous v1** (the async park-then-affirm
+escape covers only headless `-p` mode, not the interactive product), and would require a
+separately specified and re-reviewed async/broker architecture.
 
 ---
 
 ## Provenance of the "proven" claims
 
-Reproduced with a **software** `ed25519` key against real `ssh-keygen 10.4p1` (verifies through
-the identical production path): headless stdin sign; verify; **tamper** rejection (255);
-wrong-namespace rejection; `-n` mandatory; `/dev/fd/N` transport works. **Not** reproducible
-here (don't cite as fact): hardware-touch blocking (Switchyard spike; link the transcript) and
-in-hook behavior (Task 0.4).
+Reproduced with a **software** `ed25519` key against real `ssh-keygen` (OpenSSH **10.2p1–10.4p1**
+— the exact patchlevel varies by which OpenSSH is installed on the target; the FIDO surface the
+design needs is present across them, so don't hard-cite a single version as a verified fact):
+headless stdin sign; verify; **tamper** rejection (255); wrong-namespace rejection; `-n`
+mandatory; and `/dev/fd/N` transport — a reviewer confirmed `-Y verify` accepts a **non-seekable
+pipe** fd for both signature and message, so the in-memory handoff is realizable. **Not**
+reproducible here (don't cite as fact): hardware-touch blocking (Switchyard spike; link the
+transcript) and in-hook behavior (Task 0.4).
 
 ---
 
@@ -165,11 +179,26 @@ tool call ─► PreToolUse ─► hardened launcher (scrub env) ─► gate-hoo
   │      turning the gate into a global auto-approver that DELETES the user's soft gates.
   └─ gated:
        0. acquire the global ceremony lock — AFTER the gated-check (lock-before-check stalls    [R2-crit]
-          every unrelated call host-wide during a pending touch). The lock is a SECURITY         [NEW-1]
-          boundary: exactly ONE `-Y sign` may be armed system-wide, or one physical touch can
-          satisfy a different pending assertion than the human is looking at (touch-redirection).
-          Stale recovery is DEATH-PROVEN (lockfile PID + kill(pid,0) + same-boot), NEVER
-          time-based. macOS has no flock(1) → use flock(2)/fcntl from the runtime.
+          every unrelated call host-wide during a pending touch). **The lock is a CORRECTNESS   [R3]
+          mechanism, NOT a security boundary** — it prevents accidental concurrent arming and
+          cross-satisfaction under honest conditions, but a same-uid agent can arm its OWN
+          `ssh-keygen -Y sign` outside the lock (its signer never joins the gate's lock), and
+          can even `kill` the gate's holder and stale-reclaim. That does not break the core
+          guarantee (a stolen touch produces a signature the gate never accepts — the gate does
+          its own internal ceremony per call and takes no external signature; the enrolled key
+          handle is useless to the agent without a touch it cannot perform), but it means the
+          real anti-touch-redirection guarantee is **challenge-binding + WYSIWYS display
+          integrity, bounded by the conceded display-spoofing residual (NEW-2)** — not the lock.
+          Use flock(2)/fcntl (macOS has no flock(1)); the kernel releases the lock on process
+          death, so **do not** hand-roll PID/kill(pid,0) recovery (redundant, adds TOCTOU, and
+          `kill(pid,0)` on a reused/foreign PID returns EPERM which misreads as "alive"). **The
+          lock file/dir is itself a control path** [R3/fable] — root-owned in an
+          ancestor-checked location, else the agent `unlink`s and recreates it to defeat the
+          lock. (Ancestor + writability checks cover key handles, the lock, and spool dirs too.)
+          *Robust upgrade (recorded, not v1): a privileged signing broker* that exclusively
+          holds the key handle and serializes signing internally would make single-armed-signer
+          a true boundary AND close the pkill-fail-open (Task 0.1) and audit-authenticity gaps
+          at once — the natural v2 direction if Task 0.1 forces a rethink.
        1. from ONE validated internal object (derived from Claude Code's own tool_input
           serialization — no second raw re-parse; reject duplicate keys) derive:               [R2/NEW-9]
             • execution_input  — the untouched input CC will run (never NFC-normalized)
@@ -191,9 +220,16 @@ tool call ─► PreToolUse ─► hardened launcher (scrub env) ─► gate-hoo
 
 Do **not** claim byte-equality across all three. Invariants: all derive from the one validated
 object; `human_rendering` == displayed bytes (WYSIWYS); `signed_document` uniquely determines
-`execution_input`. **WYSIWYS holds literally only when full content is rendered**; for
-digest-bound large writes the human approves "this path + this hash + this diff-stat" — a
-weaker, explicitly-stated property. `signed_document` is byte-level canonical (UTF-8, recursive
+`execution_input`; **and `execution_input → human_rendering` must be injective** [R3/pentester-New-B]
+— else two different inputs render identically and the human signs the malicious one while
+reading the benign one. "Reject invalid Unicode" does **not** catch *valid* confusables
+(zero-width joiners/spaces, bidi overrides, homoglyph path components — `/Users/sean/.zshrc` vs
+a Cyrillic-`е` twin — trailing whitespace/newlines): the renderer must **escape non-ASCII /
+zero-width / bidi and surface a disambiguator** (byte length + a short hash of `execution_input`
+beside the readable summary), with golden fixtures for each confusable class. **WYSIWYS holds
+literally only when full content is rendered**; for digest-bound large writes the human approves
+"this path + this hash + this diff-stat" — a weaker, explicitly-stated property. Enumerate what
+`context` binds and confirm no component is agent-mutable between sign and execution. `signed_document` is byte-level canonical (UTF-8, recursive
 key sort, defined array/number/newline rules, reject invalid Unicode **and duplicate keys**),
 pinned by golden-byte fixtures, and binds **`cwd`** (relative Bash meaning). Namespace
 **`cc-fido-gate@<domain>`** (OpenSSH recommends domain-qualified). Replay is a non-issue
@@ -208,13 +244,26 @@ or dropped from the gated tier — otherwise "unknown tool → deny" denies it p
 {
   "rules": [
     { "tool": "Bash", "advisory_command_matches": ["git push .*(--force|--force-with-lease|-f)\\b", "\\brm\\b.*-[rf]", "npm run deploy", "\\bkubectl\\b.*\\bdelete\\b"] },
-    { "tool": ["Write", "Edit", "NotebookEdit"], "write_default": "gate", "allow_tier": ["<enrolled project worktrees pass through to normal permissions>"] },
-    { "mcp": { "trusted_servers_only": true, "default": "gate", "read_only_allowlist": ["get_*", "list_*", "search_*", "read_*"] } }
+    { "tool": ["Write", "Edit", "NotebookEdit"], "write_default": "gate", "allow_tier": ["<enrolled worktrees pass through — but sensitive globs win, see below>"] },
+    { "mcp": { "trusted_servers_only": true, "default": "gate", "read_only_allowlist": ["<explicit operator-reviewed (server,tool) identities — NOT prefix-only>"] } }
   ],
+  "rule_precedence": "sensitive gate globs are evaluated BEFORE allow_tier",
   "path_match": "nearest_existing_ancestor_then_lexical_suffix",
   "fail": "closed"
 }
 ```
+
+- **allow_tier precedence** [R3/opus-R3-A]: a sensitive gate glob (`**/.env*`, ssh/secret
+  paths) **wins over** `allow_tier`. Otherwise `<worktree>/.env` — a `.env` at the repo root,
+  *inside* the enrolled worktree — is silently un-gated, re-opening exactly the create-new-`.env`
+  case the path-match hardening exists to catch. `allow_tier` applies only to paths that match
+  **no** sensitive glob (and that secret-glob list must be treated as exhaustive-enough for the
+  guarantee). The ceremony budget failing over must **deny/retain gating, never** silently enter
+  the allow tier.
+- **MCP allowlist is explicit `(server,tool)` identities** [R3/codex+fable], operator-reviewed,
+  not a `get_*`/`read_*` prefix (a trusted server can still name a mutator `get_or_create_x`;
+  "trusted server" attests provenance, not tool semantics). Prefixes may *generate candidates*;
+  they don't grant exemptions.
 
 - **Bash = advisory only.** No Bash is hard-gated; so the "expansion/`eval` gated-or-denied"
   idea is scoped out for Bash (you can't render post-expansion effect without executing) — F is
@@ -257,9 +306,10 @@ Deferred/detached exec is *out* (the primary adversary path — named).
 ### PIN vs presence
 Presence default. no-touch-required `sk` keys sign with no finger and still verify, so the
 **negative blink-test** is the guarantee: arm the signer, instruct **withhold** touch, require
-signing does **not** complete within a window, *then* touch and require completion — a positive
-"did you touch?" cannot distinguish (a no-touch key accepts a touch too) [R2, grounded on the
-prior art's `affirmation-keys.ts:25`]. Key-type check only proves hardware-backed. PIN keys
+signing does **not** complete within a window, *then* touch and require completion (the
+**positive control** — so a never-signing/broken key can't pass the negative phase vacuously)
+[R3/pentester-New-D]. A positive-only "did you touch?" cannot distinguish (a no-touch key
+accepts a touch too) [R2, grounded on the prior art's `affirmation-keys.ts:25`]. Key-type check only proves hardware-backed. PIN keys
 experimental pending Task 0.4 (needs a root-owned askpass, not the scrubbed inherited one).
 
 ---
