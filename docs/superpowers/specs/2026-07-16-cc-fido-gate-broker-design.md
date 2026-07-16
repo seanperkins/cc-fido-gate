@@ -1,8 +1,10 @@
 # cc-fido-gate v2 — broker + file-custody design
 
 **Date:** 2026-07-16
-**Status:** Design approved in brainstorming; pending a broker feasibility gate (Section 4) before
-implementation.
+**Status:** Design approved in brainstorming; broker feasibility gate in progress
+([`task0-broker/REPORT.md`](../../../task0-broker/REPORT.md)). **Gate Q1 already forced one revision:
+the ceremony is capability-split** (client signs, daemon verifies+writes) because a system
+LaunchDaemon can't reach the USB key. Section 1 reflects it.
 **Supersedes the enforcement model of** [`docs/design.md`](../../design.md) (the synchronous
 in-hook v1), which [Task 0](../../../task0/REPORT.md) proved cannot deliver its guarantee.
 **Builds on:** [`task0/REPORT.md`](../../../task0/REPORT.md) — every platform fact cited here (0.1–0.7)
@@ -73,33 +75,54 @@ runs as you and is therefore agent-influenceable.
   not the dialog.
 - **WYSIWYS — softened.** "You see the exact bytes" degrades to the **display-spoofing residual
   `design.md` already conceded** (NEW-2): a same-uid agent can draw a benign decoy to harvest a
-  touch. Bounded by low crown-jewel frequency and the fact that they are your files. A tiny
-  setuid-root trusted-path renderer was offered and declined in favor of zero runtime root.
+  touch. Bounded by low crown-jewel frequency and the fact that they are your files.
+- **Signing runs in the console session (broker-gate Q1).** Because the daemon can't reach USB, the
+  signer runs client-side, so the `sk` **handle is readable by the agent uid** → the agent can
+  *arm/blink* the key (not sign). This re-opens the **touch-redirection residual** (NEW-1) that the
+  daemon-exclusive-arming upgrade would have closed. Core guarantee (no write without a touch)
+  unaffected — the touch is still physical and the signature is challenge-bound.
+- **A tiny setuid-root helper (signer + trusted-path dialog) would close both NEW-1 and NEW-2** but
+  reintroduces a root attack surface; **declined in favor of zero runtime root**, parked as a
+  hardening upgrade (Out of scope).
 
 ---
 
-## Section 1 — The broker (unprivileged service)
+## Section 1 — The broker, capability-split (unprivileged)
 
-- **Process:** a LaunchDaemon with `UserName=_ccfido`. Binary at a root-owned absolute path (agent
+**Why split (broker-gate Q1 finding):** a system LaunchDaemon **cannot reach the USB FIDO device** —
+`ssh-keygen -Y sign` from the daemon returns `device not found`, while the same sign in the console
+session succeeds. USB HID access requires the login session. So the ceremony splits by *capability*:
+the **console-session client** does the USB + GUI steps (arm, sign, dialog); the **daemon** does the
+privileged, USB-free steps (issue challenge, verify, own files, `uchg`-toggle + write, audit).
+`ssh-keygen -Y verify` needs no USB, which is what makes the split work.
+
+- **Daemon:** a LaunchDaemon with `UserName=_ccfido`. Binary at a root-owned absolute path (agent
   can't modify it) but **executes unprivileged**; **hardened-runtime signed** so a same-uid agent
-  can't `task_for_pid`/attach even if developer mode is on (0.7).
-- **Key custody:** exclusively owns the enrolled FIDO key handle (mode `0600`, `_ccfido`) — the
-  agent can't even *arm* the enrolled key. Only the broker ever signs, so **single-armed-signer is a
-  true boundary** (the upgrade `design.md` wanted).
+  can't `task_for_pid`/attach even if developer mode is on (0.7). Holds `allowed_signers` (the
+  enrolled **pubkey**) for verification and owns the crown-jewel files + audit log.
+- **Key handle custody:** the `sk` **handle must be readable by the console-session signer** (the
+  client runs as the login user, so the handle is group-readable to it — not `_ccfido`-`0600`).
+  **Consequence:** the agent uid can *arm* (blink) the enrolled key, but **cannot sign** without a
+  physical touch, and any signature it could coax is bound to the daemon's challenge. This means
+  **single-armed-signer is NOT a boundary here** (that was a *recorded* v2 upgrade in `design.md`,
+  not a v1 requirement); the anti-redirection story is **challenge-binding + the conceded
+  display-spoof residual**. Closing it needs the parked setuid-root signer (Out of scope).
 - **Interface:** one unix domain socket at a `_ccfido`-owned path. **Authorization is by touch,
   never by caller identity** — any local caller may request; none can satisfy without a finger.
   `LOCAL_PEERCRED` records caller uid/pid for the audit log only. Two operations:
-  - `execute-write {path, content}` → the hard-guarantee partner (broker performs the write).
-  - `approve {tool, input, cwd}` → the best-effort partner (broker returns a verdict).
+  - `execute-write {path, content}` → the hard-guarantee partner (daemon performs the write).
+  - `approve {tool, input, cwd}` → the best-effort partner (daemon returns a verdict).
 - **Ceremony (shared):**
-  1. Broker validates + canonicalizes the request and computes the `human_rendering` (escaped,
+  1. **Daemon** validates + canonicalizes the request and derives the `challenge` (the canonical
+     `signed_document` binding path+content+context) and the `human_rendering` (escaped,
      confusable-safe, byte-length + short hash — `design.md`'s WYSIWYS rules).
-  2. Broker returns `human_rendering` to the **user-session client**, which draws the dialog.
-  3. Concurrently the broker arms the signer (`/usr/bin/ssh-keygen -Y sign`, root-owned
-     `ssh-sk-helper`) → the key blinks.
-  4. Touch → broker verifies (`ssh-keygen -Y verify`, non-seekable `/dev/fd` transport — 0.4/NEW-8)
-     → on success it acts (writes, or returns `allow`); on Cancel/withhold/timeout a watchdog
-     (< outer timeout) reaps the signer, aborts, and logs `deny`.
+  2. Daemon returns `challenge` + `human_rendering` to the **console-session client**.
+  3. **Client** draws the dialog **and** arms the signer (`/usr/bin/ssh-keygen -Y sign` over the
+     `challenge`, root-owned `ssh-sk-helper`) → the key blinks → **touch** → client returns the
+     signature. Cancel/withhold/timeout → client reports abort.
+  4. **Daemon verifies** the signature is over exactly its `challenge` (`ssh-keygen -Y verify`,
+     non-seekable `/dev/fd` transport — 0.4/NEW-8; **no USB needed**) → on success it acts (writes,
+     or returns `allow`); else `deny`. A daemon-side watchdog bounds the wait.
   5. Append to the **`_ccfido`-owned authenticated audit log** (agent can't forge/flood — a real
      improvement over `design.md`'s best-effort syslog).
 - **Serialization:** one global ceremony at a time (flock/internal). Kernel releases on death; no
@@ -145,8 +168,9 @@ runs as you and is therefore agent-influenceable.
   `NODE_OPTIONS`/`PATH`/`DYLD_*`/`SSH_*`, absolute paths), then:
   - **Not gated →** `exit 0`, no decision (passthrough) — preserves CC's own prompts; never a
     blanket auto-approve (`[R2-crit]`).
-  - **Gated →** `approve` op; broker returns `human_rendering`; hook draws the dialog (softened
-    WYSIWYS) while the broker arms the key; touch → verdict → `allow` / `exit 2`.
+  - **Gated →** `approve` op; daemon returns `challenge` + `human_rendering`; hook draws the dialog
+    (softened WYSIWYS) **and** arms+signs the challenge; daemon verifies → verdict → `allow` /
+    `exit 2`.
   - **Direct write to a locked path →** deny-with-nudge (Section 2).
 - **Gated tiers** (`_ccfido`-owned policy, unchanged from `design.md`): Write/Edit/NotebookEdit
   default-gate with an allow-tier for enrolled worktrees where **sensitive globs win**; **advisory**
@@ -192,9 +216,11 @@ Deliverable, like Task 0: actual commands + outputs; all green before implementa
   to protect: its login/keychain/handle files).
 - **B — unrecognized action:** crown-jewel lock **closes** the primary deferred/detached path
   (LaunchAgents/cron/git-hooks locked); everything else stays advisory.
-- **C — consent forgery:** display-spoofing residual is now *leaned on* (no trusted-path dialog) —
-  named, bounded by low crown-jewel frequency; single-armed-signer is a *real* boundary via the
-  broker; dedicated key so the agent can't harvest a touch via its own `ssh` auth blink.
+- **C — consent forgery:** two residuals *leaned on*, both already conceded in `design.md` and both
+  closeable only by the parked setuid-root helper — (NEW-2) display-spoof, no trusted-path dialog
+  without root; (NEW-1) touch-redirection, since the console-session signer exposes the handle so
+  the agent can arm the key. Bounded by low crown-jewel frequency, challenge-binding (a coaxed touch
+  signs the daemon's specific write, not an arbitrary one), and a dedicated key (useless elsewhere).
 - **New:** broker socket abuse (mitigated: touch-not-identity auth); `_ccfido` compromise; `uchg`
   ancestor/symlink edge.
 
@@ -222,8 +248,10 @@ best-effort hook). Designed-for-later, each its own spec:
 - **Credential-custody** — broker holds ssh keys / npm tokens / kubeconfig so `git push --force` /
   `npm publish` / `kubectl` need a touch. Lock = credential possession, not file perms.
 - **MCP-proxy custody** — broker holds server tokens and mediates mutating MCP calls.
-- **Trusted-path dialog** — a setuid-root or root-daemon renderer to restore hard WYSIWYS content
-  integrity, if the softened dialog proves inadequate.
+- **Setuid-root signer + trusted-path dialog** — one narrow setuid-root helper that keeps the `sk`
+  handle root-secret (restoring single-armed-signer, closing NEW-1) *and* renders the dialog via
+  `launchctl asuser` (restoring trusted-path, closing NEW-2). Declined for v2 to keep zero runtime
+  root; the upgrade if the softened posture proves inadequate.
 
 Also out (unchanged from `design.md`): non-macOS; headless/SSH gating; WebAuthn/passkeys; defending
 the `_ccfido` account itself against a local root attacker.
