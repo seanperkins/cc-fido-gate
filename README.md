@@ -43,8 +43,10 @@ questions (Task 0) that must resolve favorably before this is buildable at all.
 
 ## Status
 
-🚧 Design revised after a five-model review (round 1, unanimous REVISE — all findings folded
-in). Implementation is gated on the **Task 0 feasibility spike**. See [docs/design.md](docs/design.md).
+🚧 Design revised after **two** five-model review rounds (both unanimous REVISE — every finding
+folded in; the concept was affirmed by the whole panel). Buildability is gated on a **Task 0
+feasibility spike** (chiefly: does Claude Code deny a tool whose hook is killed/times-out?). See
+[docs/design.md](docs/design.md).
 
 ## Requirements
 

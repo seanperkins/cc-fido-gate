@@ -1,252 +1,204 @@
 # cc-fido-gate — design
 
 **Date:** 2026-07-16
-**Status:** Revised after multi-model review (round 1, unanimous REVISE — all findings
-folded in below); implementation still gated on the Task 0 feasibility spike.
-**Prior art / spike this generalizes:**
-Switchyard's supervised-sessions **phase 2** (the signed-affirmation gate for issue
-`done`-stamps: `ssh-keygen -Y sign` over a canonical action doc, verified server-side).
-That work lives on the `feat/affirmation-relay` branch of the Switchyard repo
-(`MobilityLabs/switchyard`, PR #194 / SYD-242), **not on `main`** — so a repo checkout of
-`main` will not find any `ssh-keygen`/`allowed_signers` code. It was proven end-to-end on a
-real security key on 2026-07-16 (verdict: keep). This project lifts the primitive out of
-Switchyard into a standalone, server-less Claude Code plugin. See "Provenance of the
-'proven' claims" below for exactly what is and isn't independently reproducible.
+**Status:** Revised after **two** full multi-model review rounds (five reviewers each, all
+unanimous REVISE; every finding folded in). The concept is affirmed by the whole panel and the
+crypto is re-verified on real hardware/binaries; what remains is (a) a small set of **platform
+facts that must be settled empirically in Task 0** before this is buildable at all, and (b)
+specifications the implementation must carry. This doc reflects round-2 folding and has **not
+yet been re-reviewed** (that would be round 3). Not APPROVED.
+**Prior art:** Switchyard supervised-sessions **phase 2** on `feat/affirmation-relay`
+(`MobilityLabs/switchyard`, PR #194 / SYD-242) — **not on `main`**. Proven on a real key
+2026-07-16. NB: the prior-art `src/services/ssh-verify.ts` calls **bare `ssh-keygen`** and
+writes `allowed_signers` to an **agent-writable tmpdir** — a live example of exactly the
+bypasses this design must not inherit (see Execution invariant, NEW-5).
 
 ---
 
-## Review status
+## Review status & the load-bearing uncertainty
 
-This design was pressure-tested by a five-model panel (codex, gemini, and three Claude
-personas: fable-skeptic, opus-skeptic, pentester) on 2026-07-16. All five returned REVISE
-with a strikingly convergent finding set. **The concept was affirmed** — presence-as-authorizer
-is the right inversion, and the crypto was independently re-verified against real
-`ssh-keygen` 10.4p1 — but the *first draft's stated guarantees overclaimed relative to what
-it specified*, with four holes that would have made it security theater if shipped as
-written (environment scrubbing, canonical-document binding, fail-open-on-timeout, and
-no-touch-required keys). Every finding is addressed below; the ones that change the shape of
-the project are called out inline as **[R1: …]**.
+Two rounds, 2026-07-16, reviewers: codex, gemini, Claude fable/opus/pentester.
+- **R1** (unanimous REVISE): four theater-grade holes — env scrubbing, canonical-doc binding,
+  fail-open-on-timeout, no-touch keys. Fixed; tagged **[R1]**.
+- **R2** (unanimous REVISE): called R1 "a massive step forward" but found deeper issues,
+  several correcting the R1 fixes. Fixed; tagged **[R2]**.
+
+**Verified true on this machine (credit):** `allowManagedHooksOnly` is a real key in the
+Claude Code binary (v2.1.211); `/dev/fd/N` sign→verify works; stock `/usr/bin/ssh-keygen`
+10.4p1 has a **fully root-owned** FIDO signing chain (via `/usr/libexec/ssh-sk-helper`) — no
+Homebrew needed for sign or verify; PreToolUse hooks fire and a `deny` blocks even under
+`--dangerously-skip-permissions` (so Task 0.2 is likely green).
+
+**The finding that decides whether this is buildable at all (Task 0.1):** a PreToolUse hook can
+block a tool *only* by exiting `2` (or a `deny` on clean exit `0`); **exit 1 is non-blocking,
+and timeout-kill/crash behavior is undocumented and likely fail-open.** stdout is read only on
+a clean exit — there is **no "emit deny then flip to allow"** channel (the R1 "deny-first"
+mechanism was mechanically wrong). Fail-closed is therefore realizable only for what the hook
+*itself* catches, via an **internal watchdog that exits `2` before the outer hook timeout**; an
+external `pkill -9` mid-ceremony or a crash is intrinsically fail-open. The trigger needs zero
+agent effort — the hook blocks ~seconds waiting for a touch that never comes. If Task 0.1 finds
+timeout/kill → *proceed*, the synchronous in-hook model is **dead** and the async
+park-then-affirm queue (Switchyard's model — `defer` is honored only in non-interactive `-p`
+mode, so it can't be used interactively) is mandatory, not a fallback.
 
 ---
 
 ## The idea, in one paragraph
 
-A `PreToolUse` hook is the entire enforcement surface. Before Claude Code runs a tool, the
-hook decides whether that specific call is *gated*. For a gated call it renders the exact
-effect to the human, asks an enrolled hardware key to sign a canonical document of that
-call, verifies the signature, and allows the call only on success. An agent can run the
-hook's `ssh-keygen -Y sign` as often as it likes and still cannot produce a valid signature,
-because a security key requires a physical touch (and optionally a PIN) for every signature,
-and an agent has no finger. Presence is proven by the one thing the agent structurally
-cannot do.
-
-The guarantee is enforced by the **token at signing time**, not by the verifier: the hook
-verifies a valid signature from an enrolled key in the right namespace; it cannot itself
-observe the touch (`ssh-keygen -Y verify` has no user-verification check — the four
-`ALLOWED SIGNERS` options are `cert-authority`, `namespaces=`, `valid-after=`,
-`valid-before=`, none of which assert presence). Presence rests on the authenticator's own
-policy, which the design must protect at *enrollment* time (below), not verify after the
-fact.
+A `PreToolUse` hook is the enforcement surface. For a *gated* call it renders the exact effect,
+asks an enrolled hardware key to sign a canonical document binding that call, verifies the
+signature, and allows only on success. An agent can run `ssh-keygen -Y sign` freely but cannot
+produce a valid signature: a security key requires a physical touch per signature and an agent
+has no finger. The guarantee is enforced by the **token at signing time**, not the verifier
+(`ssh-keygen -Y verify` cannot observe the touch — its four `ALLOWED SIGNERS` options assert no
+presence). Presence is protected at **enrollment**, not verified after.
 
 ---
 
-## Honest scope of the guarantee (read this before the mechanics)
-
-**[R1 — the single most important revision.]** The first draft implied "dangerous commands
-are gated." That is not what this delivers. Stated precisely:
+## Honest scope of the guarantee
 
 > **A *recognized* gated action cannot proceed *synchronously* without a valid hardware
-> signature from an enrolled key — provided (a) Claude Code denies a tool call whose
-> PreToolUse hook times out or errors, and (b) the enrolled key genuinely requires a
-> touch.** Both provisos are load-bearing and are verified in Task 0 / enrollment, not
-> assumed.
+> signature from an enrolled, touch-required key — provided Task 0.1 (harness denies on
+> hook kill/timeout) and enrollment (negative blink-test) both hold.**
 
-What that guarantee does **not** cover, each stated plainly rather than glossed:
+Explicitly **not** covered:
+1. **Unrecognized actions** (undecidable). Bash matching is **advisory** (naive-case only).
+   The default-deny guarantee is the **structured-write tier** (Write/Edit/NotebookEdit) and
+   **default-gated MCP** (below). Bash file-writes, and any spelling the advisory list misses,
+   are out.
+2. **Deferred/detached execution** — an un-gated `printf > ~/Library/LaunchAgents/x.plist`,
+   cron, at, or git hook runs outside any hook. **This, combined with (1), is the *primary*
+   adversary path**, and it is outside the guarantee by construction. Stated plainly so the
+   reader isn't misled.
+3. **Consent forgery on a shared display** (NEW-2, below) — cannot be fully closed on macOS.
+4. **The host `root` user.**
 
-1. **Unrecognized actions** (Threat B) — matching an arbitrary shell string for "is this
-   dangerous" is undecidable. The Bash danger-list is *advisory*: it catches the naive
-   spelling, not a motivated agent (`rm -fr`, `bash ./x.sh`, `printf > .env`, calling the
-   deploy script directly). **The non-launderable guarantee is for structured tools:** MCP
-   tool-name matches and Write/Edit path-writes. Bash file-writes are *not* reliably caught
-   by the path globs — those globs live only on the Write/Edit tools.
-2. **Deferred / detached execution** — one un-gated call can install a `launchd`/`cron`/`at`
-   job, a git hook, or a detached background process that runs later, outside any
-   PreToolUse lifetime. Hence "*synchronously*" in the guarantee.
-3. **The host's `root` user** — root can edit managed settings or the policy. The gate
-   defends against the *agent*, not the *host owner*. That is the intended floor.
-
-The plugin's copy, README, and dialog text must all reflect this scoped guarantee. Leading
-with "dangerous commands are gated" over Bash examples — as the first draft did — misleads
-users about what they're protected from.
+MCP name-matching is **not "non-launderable"** [R2]: an agent-controlled MCP server can name a
+destructive op benignly, and a verb-denylist leaks (this session's live surface includes
+`create_payment`, `send_invoice`, `create_draft`, and hyphenated `delete-bill` that a
+`(delete|…)_` regex never matches). So MCP gating is **default-gate + a small read-only
+allowlist (get/list/search/read), scoped to trusted/managed servers** — not a destructive-verb
+denylist.
 
 ---
 
 ## Task 0 — the feasibility gate (must pass before any implementation)
 
-**[R1: promoted from "Task 1, spike the touch" to a hard go/no-go gate.]** Four platform
-questions are each individually fatal if they resolve the wrong way. None is verified today.
-Task 0 answers all four empirically against the installed Claude Code, and a wrong answer
-kills or reshapes the project *before* any build:
+1. **Fail-closed reality.** (a) internal watchdog < outer timeout → hook exits `2` → blocked?
+   (b) **the load-bearing one:** outer-timeout expiry, **agent-initiated `pkill -9 gate-hook`
+   mid-ceremony**, and crash — does the tool get **denied or proceed**? If proceed, adopt the
+   async model. Outer hook timeout default is **600s** (configurable), not 60s [R2].
+2. **Hooks fire + `deny` blocks under `--dangerously-skip-permissions`.** (Docs say yes.)
+3. **Managed hook is active, un-overridable, and no sibling can mutate input.** Confirm
+   `allowManagedHooksOnly:true` suppresses **user, project, *and plugin*** PreToolUse hooks
+   (not just deprioritizes), and that no permitted hook (SDK/managed/force-enabled-plugin) can
+   return `updatedInput` in the same round — otherwise a last-writer-wins `updatedInput`
+   **swaps the approved input after the gate signed it** (NEW-4). Confirm not superseded by
+   MDM/remote policy.
+4. **Interactive sign in the hook env** — a real `sk-` key blinks and blocks within the
+   timeout; a `verify-required` PIN key works given **no controlling terminal** and scrubbed
+   `SSH_ASKPASS*` (needs an explicit root-owned askpass or native PIN path, else PIN is
+   unsupported).
+5. **`osascript` survives the scrub** [R2] — determine the exact `env -i` allowlist that both
+   renders a dialog (WindowServer needs `USER`, `HOME`, `__CF_USER_TEXT_ENCODING`, XPC) **and**
+   still drops `DYLD_*`/`PATH`/injection vectors.
+6. **What environment does Claude Code hand a PreToolUse hook, and can the agent influence it?**
+   (NEW-6) — via `.claude/settings.json` `env`, direnv, launch profiles, etc. Per-Bash-call
+   `export` does not persist into CC's process env; confirm nothing else does. Drives how hard
+   the interpreter-launch hardening must be.
 
-1. **Deny-on-timeout / deny-on-error.** Does a PreToolUse hook that **times out with no
-   output**, or **exits non-zero without `permissionDecision:"deny"`**, result in the tool
-   being **denied**? Claude Code documents only exit `2` (or an explicit
-   `permissionDecision:"deny"` on exit `0`) as blocking; exit `1`, crashes, and timeouts are
-   commonly **non-blocking**. If a killed-on-timeout hook fails *open*, the gate is void in
-   the unattended case it exists for — and the design must go **deny-first** (write a `deny`
-   decision, arm the touch, flip to `allow` only on a verified signature) so any kill leaves
-   `deny` as the last word. If even deny-first can't survive a mid-run kill, the synchronous
-   in-hook model is abandoned for the async park-then-affirm fallback.
-2. **Hooks fire under `--dangerously-skip-permissions` / `bypassPermissions`.** That is the
-   mode an autonomous agent most likely runs in. If PreToolUse hooks are skipped there, the
-   gate is void precisely where it matters.
-3. **Managed-settings hooks are un-overridable and actually active.** Confirm a managed
-   `PreToolUse` hook (a) runs, (b) cannot be removed or replaced by user/project/local/plugin
-   settings, and (c) isn't silently superseded by a higher-precedence managed source (MDM /
-   remote policy) or dropped for being an "invalid entry." The installer must probe this
-   end-to-end (below), not assume it.
-4. **Interactive sign inside the hook environment.** Can the hook run `ssh-keygen -Y sign`
-   against a **real** `sk-` key, surface the ceremony, and block on the physical touch within
-   the timeout ceiling (default ~60s — long enough for a human to fumble a key out of a
-   drawer)? Include a **verify-required (PIN) key**, not just presence-only, since PIN entry
-   needs a working askpass/TTY path the presence-only spike never exercised.
-
-Deliverable: a short report answering all four with the actual commands and outputs. Only on
-four green does implementation start.
+Deliverable: a report answering all six with actual commands and outputs. Only on six green
+does implementation start.
 
 ---
 
 ## Provenance of the "proven" claims
 
-**[R1: reviewers correctly flagged the original "Proven" list as unverifiable from `main`.]**
-
-Independently reproduced during brainstorming, against real `ssh-keygen 10.4p1` (and
-re-confirmed by the opus-skeptic reviewer on the same binary) — a **software** `ed25519` key
-verifies through the identical production path, so these need no hardware:
-
-- Headless stdin sign, no controlling TTY: `printf '%s' "$DOC" | ssh-keygen -Y sign -f k -n cc-fido-gate` succeeds.
-- Correct-doc verify succeeds; **tamper** (one-token-different action) → `incorrect signature`, exit 255.
-- **Wrong namespace** at verify, and an `allowed_signers namespaces=` restriction, both reject (exit 255).
-- `-n` is mandatory at verify (empty namespace can't be used by accident).
-
-**Not** independently reproducible here, and must not be cited as established fact:
-
-- That a **hardware** `sk-` key blocks on a touch during signing — proven on Sean's key in
-  the Switchyard spike (2026-07-16), but that lives on `feat/affirmation-relay`, not `main`.
-  Link the spike transcript; do not assert it as repo-backed.
-- That signing/verify behaves correctly **inside the Claude Code hook environment** — that is
-  Task 0.4, still open.
+Reproduced with a **software** `ed25519` key against real `ssh-keygen 10.4p1` (verifies through
+the identical production path): headless stdin sign; verify; **tamper** rejection (255);
+wrong-namespace rejection; `-n` mandatory; `/dev/fd/N` transport works. **Not** reproducible
+here (don't cite as fact): hardware-touch blocking (Switchyard spike; link the transcript) and
+in-hook behavior (Task 0.4).
 
 ---
 
 ## Architecture & components
 
-Trust rests on OS permissions + Claude Code managed-settings precedence + a **scrubbed
-execution environment** — **not** on the agent choosing to respect a config file, and **not**
-on the exec environment the hook inherits.
+Trust rests on OS permissions (**every path component root-owned**, NEW-5) + managed-settings
+precedence + an **interpreter launched already-hardened** — not on the agent respecting config,
+and not on the inherited environment.
 
-| Component | Role | Location / privilege |
+| Component | Role | Privilege |
 |---|---|---|
-| `gate-hook` | The `PreToolUse` entrypoint. Reads `{tool_name, tool_input}` on stdin; gated → run ceremony; emits `permissionDecision`. **Deny-first.** | root-owned, agent-read/exec-only |
-| `policy.json` | The gated-set definition (matchers). | root-owned, agent-read-only |
-| `signing-registry.json` | **[R1]** Root-owned map of `fingerprint → principal → public key → private-key-handle path`. Drives both `-Y sign -f <handle>` and `-Y verify -I <principal>`. Not inferred from `allowed_signers` comments. | root-owned, agent-read-only |
-| `allowed_signers` | Enrolled hardware public keys, namespace-scoped, one install-fixed principal for all keys (so one `-I` accepts any). Written only by `enroll`. | root-owned, agent-read-only |
-| `enroll` CLI | Privileged, offline. Adds an `sk-*@openssh.com` public key; rejects software keys; **[R1] performs a live blink-test** (sign a nonce, operator confirms the physical touch) so a `no-touch-required` key can't silently enroll. | run with sudo |
-| `install` CLI | Privileged. Places files above root-owned (atomic write/rename, correct owner+mode); registers the hook in `managed-settings.json` **with `allowManagedHooksOnly:true`**; **[R1] refuses to claim success without an end-to-end probe** that a known gated test call is actually blocked; refuses to register until ≥1 key is enrolled. | run with sudo |
-| audit sink | **[R1] `os_log`/syslog**, not a plain file — a root-owned, append-only stream the unprivileged hook can write but cannot retroactively rewrite. (A plain "root-owned file" is unwritable by the hook, and a world-writable one is agent-truncatable — the original design was self-contradictory.) | OS logging facility |
+| launcher | **[R2]** Compiled, root-owned entrypoint invoked by the managed hook on an absolute path, with the interpreter **hardened at launch** (`bash --noprofile --norc` / ignore `BASH_ENV`; `python -E -I`) so no agent-influenced bootstrap runs before scrubbing (NEW-6). | root-owned, agent-exec-only |
+| `gate-hook` | Ceremony; **exits `2` on any internal failure/watchdog**, emits `allow` only after verify. | root-owned |
+| `policy.json` | Matchers + **exhaustive per-tool accepted-field allowlist** (deny any unrecognized field — you can't tell at runtime which are effect-bearing). | root-owned, agent-read-only |
+| `signing-registry.json` | `fingerprint → principal → pubkey → private-handle path`. | root-owned, agent-read-only |
+| `allowed_signers` | Enrolled hardware pubkeys, namespace-scoped, one install-fixed principal. | root-owned, agent-read-only |
+| `enroll` CLI | Privileged, offline. **[R2] Negative blink-test** (below). Requires a **dedicated** `sk` key not usable for SSH auth (NEW-1/touch-theft); warns if the key is referenced in `~/.ssh/config`. Derives the pubkey from the private handle; exact-fingerprint match. | sudo |
+| `install` CLI | Privileged. `managed-settings.d` drop-in (merge/refuse/rollback, warns it changes global behavior); registers hook + `allowManagedHooksOnly:true`; **verifies every ancestor dir of every control file + both binaries is root-owned, non-agent-writable** (NEW-5); e2e **canary** block-probe; refuses until ≥1 key enrolled. **Re-probe on Claude Code version change** (auto-update can silently flip semantics fail-open). | sudo |
+| audit sink | `os_log`/syslog — **best-effort operational log**, tamper-*resistant* to deletion (needs root to erase) but **not authenticated** (a same-uid agent can forge/flood entries). | OS logging |
 
-### Execution-environment invariant [R1 — new, and load-bearing]
+### Execution invariant [R1, hardened R2 — load-bearing]
 
-The hook is executed by the `claude` process **as the agent user**, inheriting the agent's
-environment. Root-owning the *script* stops the agent rewriting it but does **nothing** about
-what `ssh-keygen`/`osascript` resolve to at runtime. Without the following, one un-gated call
-drops a `ssh-keygen` shim on `PATH` (or sets `SSH_SK_PROVIDER`, `BASH_ENV`, `DYLD_*`) and
-`-Y verify` returns exit 0 with no crypto — defeating the entire gate:
-
-- Invoke **every** helper by absolute, root-owned path: `/usr/bin/ssh-keygen`,
-  `/usr/bin/osascript`, `/bin/…`. Never a bare name.
-- Run the hook body under a **scrubbed environment** — `env -i` with an explicit minimal
-  allowlist; drop `SSH_SK_PROVIDER`, `SSH_AUTH_SOCK`, `SSH_ASKPASS*`, `DYLD_*`, `LD_*`,
-  `BASH_ENV`, `ENV`, `IFS`, `PATH` (set a fixed one). Force the built-in FIDO provider.
-- The signing-key handle path comes from the root-owned `signing-registry.json`, never from
-  an agent-writable location.
-- This is a stated **invariant with a unit test** (a hostile `PATH`/`SSH_SK_PROVIDER` must
-  still verify through the real binary) — the whole crypto argument depends on it.
+Root-owning the script does nothing about what `ssh-keygen`/`osascript` resolve to, nor about
+the interpreter's own startup. Required:
+- **Absolute root-owned paths** for every helper (`/usr/bin/ssh-keygen`, `/usr/bin/osascript`,
+  `/usr/bin/env`), and every ancestor directory root-owned/non-agent-writable (NEW-5).
+- **Interpreter hardened at launch** (NEW-6) — not merely `env -i` in the body, which runs
+  *after* `BASH_ENV`/`PYTHONPATH` bootstrap.
+- **Allowlist-only** env scrub (a deny-list is a spec violation): keep only the Task-0.5
+  WindowServer set; drop `SSH_SK_PROVIDER`, **`SSH_SK_HELPER`** [R2], `SSH_AUTH_SOCK`,
+  `SSH_ASKPASS*`, `DYLD_*`, `LD_*`, `BASH_ENV`, `ENV`, `IFS`. Force the built-in FIDO provider.
+- Signing handle from the root-owned registry.
+- Unit test: hostile `PATH`/`SSH_SK_PROVIDER`/`SSH_SK_HELPER`/`BASH_ENV` still verifies via the
+  real binary.
 
 ---
 
-## The gate flow (per-call, action-bound, deny-first)
+## The gate flow
 
 ```
-tool call ─► PreToolUse ─► gate-hook  (absolute paths, scrubbed env)
-  ├─ acquire global ceremony lock (flock, FD-based, stale-owner recovery)   [R1]
-  ├─ not gated?  emit allow / exit 0  (normal flow, ~instant)
+tool call ─► PreToolUse ─► hardened launcher (scrub env) ─► gate-hook
+  ├─ NOT gated?  exit 0 with NO decision (passthrough).                                   [R2-crit]
+  │      Emitting "allow" here BYPASSES Claude Code's own prompts for every un-matched call —
+  │      turning the gate into a global auto-approver that DELETES the user's soft gates.
   └─ gated:
-       0. DECISION := deny            ← deny-first: this is the last word if we're killed [R1]
-       1. canonicalize the FULL tool_input → signed doc (see below)          [R1]
-       2. arm the signer AND render, concurrently:                           [R1]
-            • ssh-keygen -Y sign -f <handle> -n cc-fido-gate   (key blinks; touch / PIN)
-            • osascript dialog (command passed as argv, NOT interpolated)     [R1]
-              "cc-fido-gate — approve this exact action?  <rendered effect>
-               Touch your key to approve, or Cancel to deny."
-          mutual cancel: Cancel kills the signer; a completed signature dismisses the dialog;
-          an internal watchdog (< hook timeout) reaps BOTH and their process group.          [R1]
-       3. ssh-keygen -Y verify -I <principal> -n cc-fido-gate -s <sig via /dev/fd/N>          [R1]
-             message = the exact canonical bytes, held in memory (no same-user tempfile)      [R1]
-       4. verified?  DECISION := allow.  emit DECISION.  release lock.  log to os_log.
+       0. acquire the global ceremony lock — AFTER the gated-check (lock-before-check stalls    [R2-crit]
+          every unrelated call host-wide during a pending touch). The lock is a SECURITY         [NEW-1]
+          boundary: exactly ONE `-Y sign` may be armed system-wide, or one physical touch can
+          satisfy a different pending assertion than the human is looking at (touch-redirection).
+          Stale recovery is DEATH-PROVEN (lockfile PID + kill(pid,0) + same-boot), NEVER
+          time-based. macOS has no flock(1) → use flock(2)/fcntl from the runtime.
+       1. from ONE validated internal object (derived from Claude Code's own tool_input
+          serialization — no second raw re-parse; reject duplicate keys) derive:               [R2/NEW-9]
+            • execution_input  — the untouched input CC will run (never NFC-normalized)
+            • signed_document  — canonical bytes binding execution_input + cwd + context
+            • human_rendering  — deterministic, escaped; a human-READABLE effect summary
+              (path, size, diff-stat — NOT a bare SHA), or a read-only spool-file path to inspect
+       2. arm signer AND render, concurrently, each in its OWN process group:
+            • /usr/bin/ssh-keygen -Y sign -f <handle> -n cc-fido-gate@<domain>
+            • /usr/bin/osascript   (human_rendering passed as ARGV, never interpolated)
+          Cancel WINS over an already-emitted signature; watchdog (< outer timeout) reaps the
+          CHILDREN's groups and makes the hook exit 2.
+       3. /usr/bin/ssh-keygen -Y verify -I <principal> -n cc-fido-gate@<domain> -s <sig /dev/fd/N>
+          message = signed_document bytes from memory/stdin (never a tmpfile — TOCTOU).
+          (Task 0: confirm -Y verify accepts a non-seekable pipe fd; if not, fail CLOSED.)     [NEW-8]
+       4. verified? emit allow on clean exit 0.  else exit 2.  log (best-effort).
 ```
 
-- **Deny-first** (step 0) is what makes `fail:"closed"` real rather than aspirational: a
-  timeout-kill, crash, or non-zero exit leaves `deny` as the emitted/last decision. Contingent
-  on Task 0.1.
-- **Concurrent arm+render** (step 2) fixes the sequenced deadlock in the first draft: a modal
-  `osascript display dialog` blocks until a button is pressed, so the key can't be armed
-  *after* the dialog tells the human to touch it.
-- **argv, not source interpolation** (step 2): the command is passed as `argv` to a fixed
-  AppleScript (`on run argv … display dialog (item 1 of argv)`), never spliced into script
-  source — closing the AppleScript-injection consent-forgery vector. A test asserts the
-  displayed bytes equal the signed `action` bytes (WYSIWYS).
-- **Global lock** (top): parallel tool calls would otherwise stack N dialogs and contend for
-  one token, so the human can't bind a blink to a dialog. One ceremony is live at a time;
-  queued gated calls wait (bounded) or deny.
-- **Signature transport** (step 3): `-Y sign` writes to stdout, `-Y verify` wants `-s <file>`
-  plus the message on stdin. Keep the canonical bytes in process memory and pass the signature
-  via an anonymous descriptor (`/dev/fd/N`); a same-user `mktemp` is not a boundary because the
-  agent shares the UID.
+### Canonical document / three artifacts [R2]
 
-### Canonical document [R1 — now binds the full call, not a scalar]
-
-The first draft's `{v, tool, action, cwd, ts}` with a single string `action` binds only Bash.
-For Write/Edit/MCP the danger is in the *arguments/content*; signing the path to
-`managed-settings.json` without binding its content is theatrical. The signed document is a
-**recursively-normalized representation of all effect-bearing `tool_input` fields**, per tool:
-
-| Tool | Effect-bearing fields the doc must bind |
-|---|---|
-| `Bash` | `command` (raw), `timeout`, `run_in_background` |
-| `Write` | `file_path`, **content digest** (SHA-256) or, if small, the content |
-| `Edit` | `file_path`, `old_string`/`new_string` digests, `replace_all` |
-| MCP | the full nested input, recursively normalized |
-
-Rules: an unknown tool, or an unknown effect-bearing field on a gated tool, **denies** until a
-renderer exists for it. Canonicalization is a single **byte-level** algorithm — UTF-8,
-**recursive** key sort (not top-level `JSON.stringify` only), defined array order, number
-restrictions, defined final-newline, rejection of invalid Unicode — pinned by **golden-byte
-fixtures**, not semantic JSON equality. The first draft's example was inconsistent with its own
-`Object.keys().sort()` rule; the golden fixtures are the source of truth.
-
-**Render/execute equivalence.** The signed/rendered bytes must equal the bytes Claude Code
-executes. Two hazards: (a) **NFC normalization** would make signed bytes differ from the raw
-executed bytes — so the *executed-equivalence* field is not normalized (normalize only a
-separate display copy, and assert display-vs-signed equality). (b) **Shell expansion** —
-`$VARS`, command substitution, `eval`, aliases — means a rendered pre-expansion literal need not
-equal what runs. Commands containing expansion/substitution/`eval` are treated as a **gated (or
-denied) class** so rendered and executed bytes cannot silently diverge; the dialog states it
-shows the pre-expansion literal.
-
-Namespace `-n cc-fido-gate` prevents a signature solicited here being replayable in another
-domain of use (e.g. a git commit signature). Replay across calls is a non-issue: the signature
-is produced and consumed inside one hook invocation and never stored; `ts` is audit-only.
+Do **not** claim byte-equality across all three. Invariants: all derive from the one validated
+object; `human_rendering` == displayed bytes (WYSIWYS); `signed_document` uniquely determines
+`execution_input`. **WYSIWYS holds literally only when full content is rendered**; for
+digest-bound large writes the human approves "this path + this hash + this diff-stat" — a
+weaker, explicitly-stated property. `signed_document` is byte-level canonical (UTF-8, recursive
+key sort, defined array/number/newline rules, reject invalid Unicode **and duplicate keys**),
+pinned by golden-byte fixtures, and binds **`cwd`** (relative Bash meaning). Namespace
+**`cc-fido-gate@<domain>`** (OpenSSH recommends domain-qualified). Replay is a non-issue
+(one-invocation, never stored). **`NotebookEdit`** must be fully specified (schema + rendering)
+or dropped from the gated tier — otherwise "unknown tool → deny" denies it permanently.
 
 ---
 
@@ -256,130 +208,92 @@ is produced and consumed inside one hook invocation and never stored; `ts` is au
 {
   "rules": [
     { "tool": "Bash", "advisory_command_matches": ["git push .*(--force|--force-with-lease|-f)\\b", "\\brm\\b.*-[rf]", "npm run deploy", "\\bkubectl\\b.*\\bdelete\\b"] },
-    { "tool": "Write", "path_globs": ["**/.env*", "infra/**", "**/managed-settings.json"] },
-    { "tool": "Edit",  "path_globs": ["**/.env*", "infra/**"] },
-    { "tool": ["Write", "Edit", "NotebookEdit"], "write_default": "gate" },
-    { "mcp_tool": "mcp__.*__(delete|drop|deploy|write|update)_.*" }
+    { "tool": ["Write", "Edit", "NotebookEdit"], "write_default": "gate", "allow_tier": ["<enrolled project worktrees pass through to normal permissions>"] },
+    { "mcp": { "trusted_servers_only": true, "default": "gate", "read_only_allowlist": ["get_*", "list_*", "search_*", "read_*"] } }
   ],
-  "path_match": "realpath",
-  "path_base": "<absolute; relative globs resolve against a defined base, symlinks resolved>",
+  "path_match": "nearest_existing_ancestor_then_lexical_suffix",
   "fail": "closed"
 }
 ```
 
-**[R1] changes:** Bash matchers are renamed `advisory_command_matches` and documented as
-naive-case-only (see Honest Scope); the real file-write guarantee is the `write_default:
-"gate"` default-deny tier across the structured write tools (`Write`/`Edit`/`NotebookEdit`),
-**not** the Bash regexes. Path globs match **realpath** (symlinks and `../` resolved) against a
-defined base directory — the first draft left relative-vs-absolute, symlink, and case
-(case-insensitive volumes) behavior undefined, so `infra/**` would not have matched
-`/Users/…/infra/x`. `fail:"closed"` is realized by deny-first (above), and depends on Task 0.1.
-
-The policy also protects its own files, `signing-registry.json`, `allowed_signers`, and
-`managed-settings.json` as gated paths — belt-and-suspenders over the OS permissions.
+- **Bash = advisory only.** No Bash is hard-gated; so the "expansion/`eval` gated-or-denied"
+  idea is scoped out for Bash (you can't render post-expansion effect without executing) — F is
+  simply **out-of-scope for Bash**, consistent with the honest carve-out [R2/pentester-F].
+- **Write allow-tier + ceremony budget** [R2]: coding sessions do hundreds of writes; gating
+  *every* write manufactures touch-fatigue that destroys the consent the crypto certifies.
+  Writes under enrolled project worktrees pass through; only the sensitive set is gated, tuned
+  to a stated ceremonies-per-hour budget.
+- **MCP inverted to default-gate** + read-only allowlist, trusted servers only (NEW-7).
+- **Path match** resolves the **nearest existing ancestor + lexical suffix** — macOS
+  `/bin/realpath` errors on a not-yet-existing target and has no `-m`, so naive `realpath` would
+  fail to match a Write that *creates* `.env` (the security-relevant case) [R2/NEW-1]. Note the
+  check→execute symlink-swap TOCTOU: path conclusions are advisory against a concurrent
+  attacker (content digests are not).
 
 ---
 
 ## Threat model
 
-### Threat A — the agent disables the gate itself
-1. Hook registered in **managed settings** with **`allowManagedHooksOnly:true`** [R1] — the
-   enterprise tier, unoverridable by user/project/local, *and* excluding agent-installed
-   user/project/plugin hooks (which could otherwise return a malicious `updatedInput` that
-   swaps a benign call the gate approved for a destructive one — a parallel-hook TOCTOU the
-   first draft missed).
-2. Policy, hook script, `signing-registry.json`, and `allowed_signers` are **root-owned,
-   agent-read-only**; the agent cannot rewrite them.
-3. **Scrubbed exec environment + absolute binary paths** [R1] — closes the `PATH`/
-   `SSH_SK_PROVIDER`/`BASH_ENV`/`DYLD_*` shim that would otherwise make `-Y verify` theater
-   regardless of file ownership.
-4. Enrollment is privileged, offline, and **blink-tested** [R1] — the agent can't add a key
-   it controls, and a `no-touch-required` key can't silently enroll.
-5. The gate treats its own control files as gated paths (tamper-evident even if a mode is
-   loosened).
+### A — agent disables the gate
+Managed hook + `allowManagedHooksOnly:true` (Task 0.3 must confirm plugin-scope + no-sibling-
+`updatedInput`); root-owned read-only files **with every ancestor root-owned** (NEW-5);
+hardened interpreter launch + absolute paths + allowlist scrub; negative-blink-tested,
+dedicated-key enrollment; gate gates its own control files. Residual: `root` (floor).
 
-Residual: `root` can edit managed settings. Intended boundary — the gate defends against the
-agent, not the host owner.
+### B — unrecognized action
+Undecidable. `write_default:gate` + advisory Bash + default-gate MCP + honest scope.
+Deferred/detached exec is *out* (the primary adversary path — named).
 
-### Threat B — the agent crafts an action the matcher doesn't recognize
-Not fully solvable (undecidable). Mitigations: the `write_default:"gate"` tier for structured
-write tools; conservative advisory Bash matchers labelled as such; and the honest,
-re-scoped guarantee above. **Plus the time dimension [R1]:** deferred/detached execution
-(launchd/cron/at/git-hook/background process) escapes PreToolUse entirely — the guarantee is
-"cannot proceed *synchronously*," and the docs warn deferral escapes.
+### C — consent forgery (the crux weakness of a WYSIWYS gate on a shared display)
+- **AppleScript injection** → argv-not-source + WYSIWYS test. (Closed.)
+- **Touch-redirection** (NEW-1) → the global lock as a death-proven single-armed-signer
+  boundary; **dedicated key** so the agent can't harvest a touch via its own `ssh` auth blink.
+- **Display spoofing** (NEW-2) → an agent that co-owns the display can `screencapture` and clone
+  the dialog, front-run a decoy timed to a real signer arming, and steal the touch. **Cannot be
+  fully closed on macOS** (no non-root trusted-path UI). Named as a residual; mitigated only by
+  low prompt frequency (the allow-tier/budget) and action-specific readable content — accepting
+  the agent can mimic it. This + NEW-1 is the most realistic end-to-end bypass.
 
-### Threat C — consent forgery at the human boundary [R1 — new section]
-Even with valid crypto, the human can be tricked into touching for the wrong thing:
-- **AppleScript injection** → argv-not-source (above) + WYSIWYS test.
-- **Render/execute mismatch** via shell expansion → expansion/`eval` commands gated-or-denied.
-- **Look-alike / touch-fatigue**: because the dialog runs as the agent user, the agent can spam
-  pixel-identical prompts to condition reflexive touches. The un-spoofable signal is the
-  **key blink correlated with the rendered action**, not "a dialog appeared" — a UX/copy
-  requirement, and an argument for a hardware key with its own trusted display where the threat
-  model warrants it.
+### PIN vs presence
+Presence default. no-touch-required `sk` keys sign with no finger and still verify, so the
+**negative blink-test** is the guarantee: arm the signer, instruct **withhold** touch, require
+signing does **not** complete within a window, *then* touch and require completion — a positive
+"did you touch?" cannot distinguish (a no-touch key accepts a touch too) [R2, grounded on the
+prior art's `affirmation-keys.ts:25`]. Key-type check only proves hardware-backed. PIN keys
+experimental pending Task 0.4 (needs a root-owned askpass, not the scrubbed inherited one).
 
 ---
 
-## User verification (PIN) vs. presence (touch)
+## Recovery / degraded env
 
-v1's default assurance is **presence** (a touch). But "every `sk-*` key enforces a touch" is
-**false** for `-O no-touch-required` keys [R1] — touch policy is a sign-time authenticator
-property, not encoded in the public key, and `-Y verify` can't assert the user-presence flag.
-So enrollment's blink-test is the real presence guarantee, not the key-type check (which only
-proves *hardware-backed*). Copy rule: "hardware-backed, and presence-required *because
-enrollment blink-tested it* — not because the key type guarantees it," and never claim the
-*verifier* observed the touch/PIN. `verify-required` (PIN) keys are supported but marked
-**experimental until Task 0.4** exercises the PIN path inside the real hook environment.
-
----
-
-## Recovery / key loss
-
-Enroll two or more keys, all under **one install-fixed principal** so a single `-Y verify -I
-<principal>` accepts any of them [R1], each registered in `signing-registry.json` with its own
-private-key-handle path. Losing one is an inconvenience, not a lockout. Lose all → re-enroll via
-the privileged `enroll` CLI (host access, below the gate's floor — not a bypass).
-
----
-
-## Degraded environments [R1 — new]
-
-`osascript` needs a WindowServer connection; under SSH-to-a-Mac or a bare `tmux`/`screen` it
-fails. Combined with `fail:"closed"` that would lock the user out of every gated tool. Rendering
-degrades along a chain: native GUI dialog → `/dev/tty` terminal prompt → (if neither is
-available) deny with a clear "no trusted render surface" reason. The touch itself still works
-headlessly; only the *trusted render* needs the fallback.
+2+ dedicated keys under one install-fixed principal; each in the registry. Lose all → sudo
+re-enroll. Command hooks have **no controlling terminal**, so there is **no `/dev/tty`
+fallback** [R2] — render is **GUI → deny**, making v1 a **local-desktop** tool; headless/SSH
+gating requires the async model.
 
 ---
 
 ## Testing
 
-- **Env-hygiene invariant [R1]** — hook with hostile `PATH`/`SSH_SK_PROVIDER`/`BASH_ENV` still
-  verifies via the real binary (unit-testable without Claude Code).
-- **Crypto plumbing** (green) — software `ed25519`, real `ssh-keygen -Y verify`, no mocks:
-  verify, namespace enforcement, principal mismatch, tamper/replay rejection.
-- **Canonicalization** — golden-byte fixtures; recursive key sort; a non-Bash (nested MCP /
-  Write-with-content) input; NFC display-vs-executed equality; unknown-tool/field → deny.
-- **WYSIWYS [R1]** — displayed dialog bytes == signed `action` bytes.
-- **Policy matching** — every rule type incl. `write_default:"gate"`; realpath/symlink/`../`
-  cases; `fail:"closed"` via deny-first on error / no keys.
-- **`enroll`** — accepts real `sk-ssh-ed25519@openssh.com` / `sk-ecdsa-sha2-nistp256@openssh.com`
-  wire spellings; rejects software keys and junk; TOCTOU-safe (read `.pub` once, bounded size,
-  one record, exclusive lock); blink-test path asserted; two-keys-one-principal verify path.
-- **Hook-protocol / harness [R1]** — Task 0 deliverables: deny-on-timeout, deny-on-nonzero,
-  hooks-fire-under-bypass, managed-precedence-active, malicious-`updatedInput`-excluded,
-  concurrent-call serialization, orphaned-signer cleanup.
-- **`install` end-to-end probe [R1]** — a known gated test call is actually blocked post-install.
-- **Not automatable, stated plainly** — that a touch/PIN actually happened; the verifier never
-  sees it. The manual run on real hardware (and the enrollment blink-test) is the deliverable.
+Env-hygiene (hostile `PATH`/`SSH_SK_PROVIDER`/`SSH_SK_HELPER`/`BASH_ENV` still verifies via the
+real binary); crypto plumbing (green); three-artifact canonicalization (golden fixtures, nested
+MCP, `signed_document`→`execution_input`, duplicate-key rejection, unknown-field→deny,
+NotebookEdit specified-or-absent); WYSIWYS (full-content == displayed; digest mode =
+path+hash+diffstat); **negative blink-test** (withhold→must block); enroll (dedicated-key,
+pubkey-from-handle, two-keys-one-principal, TOCTOU-safe); policy (`write_default:gate` +
+allow-tier; **Write-creates-new-file under a gated glob**; nearest-ancestor realpath; symlink
+TOCTOU; default-gate MCP incl. hyphenated names; passthrough triggers the normal prompt);
+lock (death-proven recovery, single-armed-signer, touch-then-Cancel→deny); Task-0 harness
+(watchdog-exit-2 blocks; **agent `pkill` + timeout + crash characterized**; bypass-mode;
+managed+plugin precedence; no-sibling-updatedInput; concurrent serialization; osascript
+survives scrub; hook env influenceability); install (canary probe, ancestor-ownership check,
+version-change re-probe); not-automatable: that a touch happened.
 
 ---
 
 ## Out of scope (v1)
 
-- Non-macOS renderers (Linux/Windows) — follow-up; the `/dev/tty` fallback is the portable seam.
-- WebAuthn/passkeys, push-notification transport.
-- Session-unlock / windowed authorization — v1 is strictly per-call action-bound.
-- Per-project policy — v1 policy is install-global and root-owned.
-- Defending against the host `root` user, and against deferred/detached execution (Threat B) —
-  explicit non-goals, documented so users don't over-trust the gate.
+Non-macOS + headless/SSH gating (async model); WebAuthn/passkeys; push transport;
+session-unlock windows; per-project policy; security-grade authenticated audit; defending host
+`root`, deferred/detached execution, and shared-display consent-spoofing (NEW-2) — explicit
+non-goals, documented so the gate isn't over-trusted.
