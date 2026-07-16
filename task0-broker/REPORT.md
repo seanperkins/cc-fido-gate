@@ -32,3 +32,16 @@ agent uid — *even though the agent owns the parent directory* (immutable block
 directory owned by another principal blocks creation. This is enforced with **no hook and no
 runtime root**. The remaining half — that the *owner* (`_ccfido`, non-root) can toggle `uchg` to
 perform legitimate writes — is proven in Q1/Task 4.
+
+## Account — `_ccfido` service account — ✅ GREEN
+
+`account-setup.sh` / `account-teardown.sh`. Result:
+
+```
+_ccfido (uid 309), gid=20(staff), hidden service-account range
+su _ccfido  ->  "su: Sorry"   (sean cannot become _ccfido — no login, /usr/bin/false shell)
+```
+
+A dedicated non-login service account exists, can own files and serve as a LaunchDaemon
+`UserName`, and the agent uid (`sean`) cannot act as it. (Pre-existed on this machine from an
+earlier attempt; removed at the gate's teardown.)
