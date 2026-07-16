@@ -45,3 +45,17 @@ su _ccfido  ->  "su: Sorry"   (sean cannot become _ccfido — no login, /usr/bin
 A dedicated non-login service account exists, can own files and serve as a LaunchDaemon
 `UserName`, and the agent uid (`sean`) cannot act as it. (Pre-existed on this machine from an
 earlier attempt; removed at the gate's teardown.)
+
+## Key custody — `_ccfido`-owned `sk` handle — ✅ GREEN
+
+`enroll-broker-key.sh`. Enrolled a dedicated `ed25519-sk` (touch-required) key into `/var/ccfido`:
+
+```
+-rw-------@ 1 _ccfido wheel  gate_sk          (0600 — private handle)
+-rw-r--r--@ 1 _ccfido wheel  gate_sk.pub
+-rw-r--r--@ 1 _ccfido wheel  allowed_signers
+PASS: handle not readable by sean
+```
+
+The signing handle is owned by `_ccfido` at `0600`, so the agent uid can't read it and therefore
+**can't even arm the enrolled key** — the precondition for "only the broker ever signs".
