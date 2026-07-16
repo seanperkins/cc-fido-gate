@@ -131,3 +131,6 @@ client with the daemon verifying (all sub-pieces proven), and the socket transpo
 *daemon-signs* design is abandoned. Implementation may proceed against the revised Section 1; the
 first implementation task should be an end-to-end integration of the split ceremony
 (client-sign → socket → daemon-verify → `uchg`-write), which composes only already-proven pieces.
+
+**Teardown:** all machine state created by the gate was removed — `_ccfido` account deleted,
+`/var/ccfido` and `/var/ccfido-run` gone, throwaway LaunchDaemon booted out. Machine restored.
