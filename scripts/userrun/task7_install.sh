@@ -21,7 +21,13 @@ if ! sudo test -s /var/ccfido/allowed_signers; then
   echo "Prereqs installed. Next: run  bash scripts/userrun/task7_enroll.sh  to enroll a key, then re-run THIS script to activate the daemon."
   exit 0
 fi
+# Load (or reload) the LaunchDaemon, then kickstart a CLEAN start so the broker binds a fresh socket.
+# bootout-first makes re-running install idempotent (bootstrap alone errors "service already loaded");
+# kickstart -k defends against a stale socket left by a prior manual daemon or re-install — without it a
+# shadowed socket makes clients see "broker unreachable" though the daemon is up and holds the fd.
+sudo launchctl bootout system /Library/LaunchDaemons/com.cc-fido-gate.brokerd.plist 2>/dev/null || true
 sudo launchctl bootstrap system /Library/LaunchDaemons/com.cc-fido-gate.brokerd.plist
+sudo launchctl kickstart -k system/com.cc-fido-gate.brokerd
 sleep 1
 echo "=== CANARY: the BROKER must deny an execute-write to a control path (NON-destructive) ==="
 # Drives the broker as the agent uid; the daemon denies control paths BEFORE any dialog/write.
