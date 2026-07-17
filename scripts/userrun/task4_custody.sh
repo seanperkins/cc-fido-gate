@@ -1,6 +1,8 @@
 #!/bin/bash
 set -u
-D=$(mktemp -d); chmod 755 "$D"; FAILED=0     # 755 so sudo -u _ccfido can traverse (test-only)
+# Temp dir under /tmp (→ /private/tmp, 1777) NOT the default per-user $TMPDIR (/var/folders/.../T is 0700,
+# which _ccfido can't traverse — the owner-unlock step at line 12 runs as _ccfido, not root):
+D=$(mktemp -d /tmp/ccfido-task4.XXXXXX); chmod 755 "$D"; FAILED=0   # 755 leaf so _ccfido can traverse
 pass(){ echo "  PASS: $1"; }; fail(){ echo "  FAIL: $1"; FAILED=1; }
 echo original > "$D/secret"; sudo chown _ccfido "$D/secret"; sudo chflags uchg "$D/secret"
 echo hostile > "$D/secret" 2>/dev/null && fail "wrote locked" || pass "write denied"

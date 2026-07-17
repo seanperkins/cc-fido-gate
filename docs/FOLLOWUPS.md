@@ -45,6 +45,12 @@ NotebookEdit (M3), plus the per-task review fixes already committed. The below s
   registry file across the RMW.
 
 ## Minor / cosmetic
+- **Client — Cancel now hard-kills a live signer** (introduced by the touch-from-the-get-go ceremony,
+  `confirmAndSign`). Because the key is armed concurrently with the dialog, clicking Cancel `terminate()`s a
+  running `ssh-keygen` mid-FIDO-op. Per the task0-broker findings that *can* leave the device transiently
+  `device not found` for the next arm; `sign()`'s existing retry (3× / 1.5s→3s backoff) would re-arm and
+  recover. NOT observed in practice yet — theoretical, flagged because the concurrent design is a new trigger
+  for that known transient. Fix only if it ever surfaces: a short settle delay or a gentler signer teardown.
 - **Task2 — binary content ≤ INLINE_MAX signs `content_mode:"inline"`** though the dialog body shows
   `[binary, N bytes]`. Injectivity holds (op/path/cwd/content_sha256 are separate signed fields; the
   dialog tail shows the full sha256). design.md's "path+cwd+op disambiguator" is satisfied structurally.
