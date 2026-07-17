@@ -10,7 +10,8 @@ cat > "$D/settings.json" <<JSON
 JSON
 sudo -u _ccfido "$BIN" daemon & DPID=$!; sleep 1
 echo ">>> APPROVE + TOUCH when the dialog appears <<<"
-"$CLAUDE_BIN" -p "Using the Write tool, create /tmp/claude/ccfg-task6/.env with contents FOO=bar, then stop." \
+"$CLAUDE_BIN" -p "Using the Write tool, create $D/.env with contents FOO=bar, then stop." \
   --model claude-haiku-4-5-20251001 --settings "$D/settings.json" --dangerously-skip-permissions --allowedTools Write < /dev/null
-[ -f /tmp/claude/ccfg-task6/.env ] && echo "PASS: gated write completed after touch" || echo "note: denied (expected if touch withheld)"
+# .env lives in the per-run $D (fresh each run) so a stale file can't false-PASS without a new touch:
+[ -f "$D/.env" ] && echo "PASS: gated write completed after touch" || echo "note: denied (expected if touch withheld)"
 sudo kill "$DPID" 2>/dev/null
