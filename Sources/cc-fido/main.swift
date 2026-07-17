@@ -10,6 +10,8 @@ guard let cmd = args.first else { usage() }
 switch cmd {
 case "daemon":
     try Broker().serve()
+case "hook":
+    hookMain()
 case "write":
     guard args.count >= 2 else { usage() }
     exit(runWrite(path: args[1], content: FileHandle.standardInput.readDataToEndOfFile()))
