@@ -6,6 +6,29 @@ func usage() -> Never {
     FileHandle.standardError.write(Data("usage: cc-fido {daemon|hook|write <path>|enroll|install|enroll-file <path> [mode]|enroll-dir <path>}\n".utf8))
     exit(2)
 }
+
+func ccfidoUIDOr(_ fallback: Int) -> Int { getpwnam("_ccfido").map { Int($0.pointee.pw_uid) } ?? fallback }
+func warnAncestors(_ path: String) {
+    let w = checkAncestors(path, safeOwners: [0, ccfidoUIDOr(-1)])
+    if !w.isEmpty { FileHandle.standardError.write(Data("cc-fido: WARNING agent-writable ancestors (parent-swap residual, spec §2): \(w)\n".utf8)) }
+}
+func enrollSteps(_ plan: [[String]]) {
+    for a in plan where !runPrivileged(a) {
+        FileHandle.standardError.write(Data("cc-fido: privileged step failed: \(a)\n".utf8)); exit(1)
+    }
+}
+// on registry-add failure, undo the lock so the file returns to its pre-enroll (usable) state.
+// Restores the CAPTURED original uid (not an assumed one), and reports whether every step succeeded.
+func rollbackFileLock(_ path: String, toUID uid: UInt32) {
+    let unlocked = runPrivileged(["/usr/bin/chflags", "nouchg", path])
+    let chowned = runPrivileged(["/usr/sbin/chown", String(uid), path])
+    if unlocked && chowned {
+        FileHandle.standardError.write(Data("cc-fido: rolled back lock on \(path)\n".utf8))
+    } else {
+        FileHandle.standardError.write(Data("cc-fido: ROLLBACK INCOMPLETE on \(path) (nouchg=\(unlocked) chown=\(chowned)) — the file may still be _ccfido-owned/locked; fix manually\n".utf8))
+    }
+}
+
 guard let cmd = args.first else { usage() }
 switch cmd {
 case "daemon":
@@ -15,6 +38,45 @@ case "hook":
 case "write":
     guard args.count >= 2 else { usage() }
     exit(runWrite(path: args[1], content: FileHandle.standardInput.readDataToEndOfFile()))
+case "_render-plist": print(renderPlist()); exit(0)
+case "_render-managed": print(renderManagedSettings(hookCmd: Paths.code + "/cc-fido hook")); exit(0)
+case "_blink-test":
+    guard args.count >= 2 else { usage() }
+    exit(negativeBlinkTest(handle: args[1], namespace: Paths.namespace) ? 0 : 1)
+// runs AS _ccfido (via `sudo -u _ccfido`) so it can write the 0600 _ccfido-owned custody.json:
+case "_registry-add":
+    guard args.count >= 3, args[1] == "file" || args[1] == "dir" else { usage() }
+    do {
+        try CustodyRegistry.add(file: args[1] == "file" ? args[2] : nil,
+                                dir: args[1] == "dir" ? args[2] : nil)
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("cc-fido: registry add failed: \(error)\n".utf8)); exit(1)
+    }
+case "enroll-file":
+    guard args.count >= 2 else { usage() }
+    let path = (args[1] as NSString).standardizingPath
+    let mode = args.count > 2 ? (Int(args[2], radix: 8) ?? 0o600) : 0o600
+    warnAncestors(path)
+    var pre = stat(); let origUID = (lstat(path, &pre) == 0) ? pre.st_uid : getuid()  // capture owner BEFORE enroll
+    // Lock FIRST, then register. This ordering fails SAFE: a registry failure leaves the file
+    // locked-but-unregistered (over-protected, `cc-fido write` won't touch it) — never
+    // registered-but-writable (which would advertise protection it doesn't have). We roll the lock back.
+    enrollSteps(planEnrollFile(path, mode: mode))
+    if !runPrivileged(["-u", "_ccfido", Paths.code + "/cc-fido", "_registry-add", "file", path]) {
+        rollbackFileLock(path, toUID: origUID)
+        FileHandle.standardError.write(Data("cc-fido: registry add failed for \(path)\n".utf8)); exit(1)
+    }
+    print("cc-fido: enrolled + registered file \(path)"); exit(0)
+case "enroll-dir":
+    guard args.count >= 2 else { usage() }
+    let path = (args[1] as NSString).standardizingPath
+    warnAncestors(path)
+    enrollSteps(planEnrollDir(path))
+    if !runPrivileged(["-u", "_ccfido", Paths.code + "/cc-fido", "_registry-add", "dir", path]) {
+        FileHandle.standardError.write(Data("cc-fido: registry add failed for \(path); dir remains _ccfido-owned — re-run enroll-dir to register\n".utf8)); exit(1)
+    }
+    print("cc-fido: enrolled + registered dir \(path)"); exit(0)
 default:
     FileHandle.standardError.write(Data("cc-fido: unknown command \(cmd)\n".utf8)); exit(2)
 }
