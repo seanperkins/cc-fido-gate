@@ -40,4 +40,11 @@ final class CLIHelperTests: XCTestCase {
     func testRenderRejectsMissingSource() {
         XCTAssertThrowsError(try renderPolicy(srcPath: "/no/such/file.json", home: "/Users/alice"))
     }
+    func testRenderKeepsSlashesUnescaped() throws {
+        let src = tmpJSON(#"{"allow_tier":["__HOME__/**"],"sensitive_globs":["**/.env*"],"locked_paths":[],"bash_advisory":[],"mcp_allow":[]}"#)
+        let s = String(data: try renderPolicy(srcPath: src, home: "/Users/alice"), encoding: .utf8)!
+        XCTAssertTrue(s.contains("/Users/alice/**"), "expected unescaped slashes")
+        XCTAssertTrue(s.contains("**/.env*"))
+        XCTAssertFalse(s.contains(#"\/"#), "no slash should be escaped as \\/")
+    }
 }

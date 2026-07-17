@@ -73,7 +73,7 @@ public func renderPolicy(srcPath: String, home: String) throws -> Data {
         throw RenderError.badSource("invalid JSON in \(srcPath)")
     }
     let substituted = substituteHome(obj, home)
-    return try JSONSerialization.data(withJSONObject: substituted, options: [.prettyPrinted, .sortedKeys])
+    return try JSONSerialization.data(withJSONObject: substituted, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
 }
 private func substituteHome(_ v: Any, _ home: String) -> Any {
     if let s = v as? String { return s.replacingOccurrences(of: "__HOME__", with: home) }
