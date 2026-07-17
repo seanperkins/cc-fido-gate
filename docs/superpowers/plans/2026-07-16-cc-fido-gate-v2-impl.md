@@ -73,7 +73,7 @@ Developed in-repo; the built binary + `policy.json` are copied to `CODE` by `cc-
 - `Sources/cc-fido/main.swift` — subcommand dispatch (grows each task).
 - `install/policy.json` — default hook tiers (Task 5).
 - `Tests/CCFidoCoreTests/*.swift` — mirrors the core sources.
-- `tests/userrun/*.sh` — `[USER-RUN]` scripts.
+- `scripts/userrun/*.sh` — `[USER-RUN]` scripts.
 
 ---
 
@@ -84,7 +84,7 @@ The spine, composing pieces the feasibility gate proved (socket Q4, owner `uchg`
 **Files:**
 - Create: `Package.swift`, `Sources/CCFidoCore/{Paths,Wire,Crypto,Canonical,Audit,Broker,Client}.swift`, `Sources/cc-fido/main.swift`
 - Test: `Tests/CCFidoCoreTests/{Wire,Crypto,Canonical,BrokerAllowlist}Tests.swift`
-- Test (USER-RUN): `tests/userrun/bootstrap.sh`, `tests/userrun/task1_e2e.sh`
+- Test (USER-RUN): `scripts/userrun/bootstrap.sh`, `scripts/userrun/task1_e2e.sh`
 
 **Interfaces produced:**
 - `Paths` enum: `keydir, runDir, sock, allowedSigners, audit, custody, policy, code, namespace, principal, handle, signKeygen, verifyKeygen, controlDenylist` (`[String]`).
@@ -837,7 +837,7 @@ git commit -m "feat(broker): walking-skeleton spine — allowlisted execute-writ
 - [ ] **Step 20: `[USER-RUN]` Bootstrap script** (reuses proven probes; the user runs it)
 
 ```bash
-# tests/userrun/bootstrap.sh — one-time setup for the Task 1 e2e. Requires sudo + ONE enrollment touch.
+# scripts/userrun/bootstrap.sh — one-time setup for the Task 1 e2e. Requires sudo + ONE enrollment touch.
 #!/bin/bash
 set -eu
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -863,13 +863,13 @@ echo "expect denied (keydir unreadable by sean):"; cat /var/ccfido/allowed_signe
 echo "bootstrap complete."
 ```
 
-- [ ] **Step 21: `[USER-RUN]` Run the bootstrap** — `! bash tests/userrun/bootstrap.sh`
+- [ ] **Step 21: `[USER-RUN]` Run the bootstrap** — `! bash scripts/userrun/bootstrap.sh`
 Expected: account created (or exists), one enrollment touch, `/Users/Shared/ccfido-target.txt` `uchg` + registered in `custody.json`, keydir read denied.
 
 - [ ] **Step 22: `[USER-RUN]` e2e ceremony test**
 
 ```bash
-# tests/userrun/task1_e2e.sh — daemon as _ccfido, client ceremony, ONE touch writes the enrolled target.
+# scripts/userrun/task1_e2e.sh — daemon as _ccfido, client ceremony, ONE touch writes the enrolled target.
 #!/bin/bash
 set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -889,10 +889,10 @@ echo "=== audit tail ==="; sudo tail -3 /var/ccfido/audit.log
 echo "=== target re-locked ==="; sudo ls -lO "$TARGET"
 ```
 
-- [ ] **Step 23: `[USER-RUN]` Run the e2e** — `! bash tests/userrun/task1_e2e.sh`
+- [ ] **Step 23: `[USER-RUN]` Run the e2e** — `! bash scripts/userrun/task1_e2e.sh`
 Expected: dialog → Approve → touch → `PASS`; `allowed_signers` and `/tmp/not-enrolled` writes **denied without a touch prompt** (C-3); audit shows `write_ok` + two `deny_target`; target `uchg` again. Negative control: `echo x > "$TARGET"` → `Operation not permitted`.
 
-- [ ] **Step 24: Commit** — `git add tests/userrun/bootstrap.sh tests/userrun/task1_e2e.sh && git commit -m "test(broker): e2e ceremony + allowlist/control-path denial harness (USER-RUN)"`
+- [ ] **Step 24: Commit** — `git add scripts/userrun/bootstrap.sh scripts/userrun/task1_e2e.sh && git commit -m "test(broker): e2e ceremony + allowlist/control-path denial harness (USER-RUN)"`
 
 ---
 
@@ -991,7 +991,7 @@ public func humanRendering(_ doc: SignedDocument, content: Data) -> String {
 
 Add the **`approve`** operation (best-effort verdict, no write) with a **compiling** canonicalization (C-2 fix via `canonicalJSON`), `verifyChain` for the audit log, and confirm the Task-1 threading (per-connection thread, **real watchdog-thread wall-clock cap** — not `SO_RCVTIMEO`, which is per-recv — and the `flock` that both serializes and protects the audit read-modify-write). Verify logic `[SW]`; socket + `uchg` behavior `[USER-RUN]`.
 
-**Files:** Modify `Sources/CCFidoCore/{Broker,Audit,Client}.swift`; Test `Tests/CCFidoCoreTests/{Audit,BrokerLogic}Tests.swift`; Test (USER-RUN) `tests/userrun/task3_daemon.sh`
+**Files:** Modify `Sources/CCFidoCore/{Broker,Audit,Client}.swift`; Test `Tests/CCFidoCoreTests/{Audit,BrokerLogic}Tests.swift`; Test (USER-RUN) `scripts/userrun/task3_daemon.sh`
 
 **Interfaces produced:** `Broker.decideApprove(_ req: [String:Any], caller: Int) throws -> (challengeB64: String, human: String)`; `auditVerifyChain(path:) -> Bool`; `runApprove(tool:toolInput:cwd:sockPath:) -> Bool`.
 
@@ -1112,7 +1112,7 @@ public func runApprove(tool: String, toolInput: [String: Any], cwd: String, sock
 - [ ] **Step 10: `[USER-RUN]` Hardened-daemon test** (cancel→deny, approve op, DoS-resistance sanity, chain)
 
 ```bash
-# tests/userrun/task3_daemon.sh
+# scripts/userrun/task3_daemon.sh
 #!/bin/bash
 set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"; TARGET=/Users/Shared/ccfido-target.txt
@@ -1129,9 +1129,9 @@ sudo kill "$DPID" 2>/dev/null
 echo "=== audit chain ==="; sudo -u _ccfido "$BIN" _verify-audit 2>/dev/null || echo "(add _verify-audit or check manually)"
 ```
 
-Run (user): `! bash tests/userrun/task3_daemon.sh` — Expect `PASS: cancel wrote nothing`, `PASS: not starved`.
+Run (user): `! bash scripts/userrun/task3_daemon.sh` — Expect `PASS: cancel wrote nothing`, `PASS: not starved`.
 
-- [ ] **Step 11: Commit** — `git add Sources/CCFidoCore Tests/CCFidoCoreTests/AuditTests.swift Tests/CCFidoCoreTests/BrokerLogicTests.swift tests/userrun/task3_daemon.sh && git commit -m "feat(broker): approve op (canonicalJSON), verifyChain, per-conn thread + watchdog wall-clock cap"`
+- [ ] **Step 11: Commit** — `git add Sources/CCFidoCore Tests/CCFidoCoreTests/AuditTests.swift Tests/CCFidoCoreTests/BrokerLogicTests.swift scripts/userrun/task3_daemon.sh && git commit -m "feat(broker): approve op (canonicalJSON), verifyChain, per-conn thread + watchdog wall-clock cap"`
 
 ---
 
@@ -1139,7 +1139,7 @@ Run (user): `! bash tests/userrun/task3_daemon.sh` — Expect `PASS: cancel wrot
 
 The hard-guarantee enrollment surface (spec §2) **and the C-3 anchor**: `enroll-file`/`enroll-dir` write the `_ccfido`-owned `custody.json` the broker consults. `checkAncestors` now checks **writability** (mode bits) and uses `lstat` (no symlink follow), and **WARNS rather than refuses** on agent-owned ancestors (spec §2 concedes the parent-swap residual). Registry + plan logic `[SW]`; enforcement `[USER-RUN]`.
 
-**Files:** Create `Sources/CCFidoCore/Custody.swift`; Test `Tests/CCFidoCoreTests/CustodyTests.swift`; Test (USER-RUN) `tests/userrun/task4_custody.sh`
+**Files:** Create `Sources/CCFidoCore/Custody.swift`; Test `Tests/CCFidoCoreTests/CustodyTests.swift`; Test (USER-RUN) `scripts/userrun/task4_custody.sh`
 
 **Interfaces produced:**
 - `planEnrollFile(_ path: String, mode: Int) -> [[String]]`, `planEnrollDir(_ path: String) -> [[String]]`
@@ -1240,7 +1240,7 @@ public enum CustodyRegistry {
 - [ ] **Step 5: `[USER-RUN]` Enforcement test** (mirrors probe-q3; file + dir lock + owner-unlock)
 
 ```bash
-# tests/userrun/task4_custody.sh
+# scripts/userrun/task4_custody.sh
 #!/bin/bash
 set -u
 D=$(mktemp -d); chmod 755 "$D"; FAILED=0     # 755 so sudo -u _ccfido can traverse (test-only)
@@ -1257,9 +1257,9 @@ sudo chflags nouchg "$D/secret" 2>/dev/null; sudo rm -rf "$D"
 [ "$FAILED" = 0 ] && echo "RESULT: GREEN" || echo "RESULT: RED"
 ```
 
-Run (user): `! bash tests/userrun/task4_custody.sh` — Expect `RESULT: GREEN`.
+Run (user): `! bash scripts/userrun/task4_custody.sh` — Expect `RESULT: GREEN`.
 
-- [ ] **Step 6: Commit** — `git add Sources/CCFidoCore/Custody.swift Tests/CCFidoCoreTests/CustodyTests.swift tests/userrun/task4_custody.sh && git commit -m "feat(custody): enrolled-target registry (C-3 anchor) + writability-aware ancestor check + enforcement test"`
+- [ ] **Step 6: Commit** — `git add Sources/CCFidoCore/Custody.swift Tests/CCFidoCoreTests/CustodyTests.swift scripts/userrun/task4_custody.sh && git commit -m "feat(custody): enrolled-target registry (C-3 anchor) + writability-aware ancestor check + enforcement test"`
 
 ---
 
@@ -1395,7 +1395,7 @@ public struct Policy {
 
 The `PreToolUse` thin client (spec §3). Round-1 fix: `scrubEnv` is now the single source consumed by every child spawn (via `scrubbedEnv()` in `Crypto`/`Client`), and the hook loads policy from the **hook-readable** `/opt/cc-fido-gate/policy.json`. `.pass`→passthrough; `.denyNudge`→exit 2 nudge; `.gate`→`approve` ceremony; any error→exit 2. Logic `[SW]`; live-CC firing `[USER-RUN]`.
 
-**Files:** Create `Sources/CCFidoCore/HookLogic.swift`; Modify `Sources/cc-fido/main.swift`; Test `Tests/CCFidoCoreTests/HookTests.swift`; Test (USER-RUN) `tests/userrun/task6_hook.sh`
+**Files:** Create `Sources/CCFidoCore/HookLogic.swift`; Modify `Sources/cc-fido/main.swift`; Test `Tests/CCFidoCoreTests/HookTests.swift`; Test (USER-RUN) `scripts/userrun/task6_hook.sh`
 
 **Interfaces produced:** `scrubEnv(_ env: [String:String]) -> [String:String]`; `decideAndEmit(event:policy:out:err:approve:) -> Int32`; `hookMain() -> Never`.
 
@@ -1487,7 +1487,7 @@ Add to `main.swift`: `case "hook": hookMain()`.
 - [ ] **Step 5: `[USER-RUN]` Live-hook test** (real CC, real touch; hook reads `/opt/cc-fido-gate/policy.json`)
 
 ```bash
-# tests/userrun/task6_hook.sh
+# scripts/userrun/task6_hook.sh
 #!/bin/bash
 set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"; CLAUDE_BIN="${CLAUDE_BIN:-/Users/sean/.local/bin/claude}"
@@ -1506,9 +1506,9 @@ echo ">>> APPROVE + TOUCH when the dialog appears <<<"
 sudo kill "$DPID" 2>/dev/null
 ```
 
-Run (user, sandbox OFF): `! bash tests/userrun/task6_hook.sh` — Expect dialog on the `.env` Write → touch → `PASS`.
+Run (user, sandbox OFF): `! bash scripts/userrun/task6_hook.sh` — Expect dialog on the `.env` Write → touch → `PASS`.
 
-- [ ] **Step 6: Commit** — `git add Sources/CCFidoCore/HookLogic.swift Sources/cc-fido/main.swift Tests/CCFidoCoreTests/HookTests.swift tests/userrun/task6_hook.sh && git commit -m "feat(hook): env scrub applied to all children, hook-readable policy, fail-closed"`
+- [ ] **Step 6: Commit** — `git add Sources/CCFidoCore/HookLogic.swift Sources/cc-fido/main.swift Tests/CCFidoCoreTests/HookTests.swift scripts/userrun/task6_hook.sh && git commit -m "feat(hook): env scrub applied to all children, hook-readable policy, fail-closed"`
 
 ---
 
@@ -1516,7 +1516,7 @@ Run (user, sandbox OFF): `! bash tests/userrun/task6_hook.sh` — Expect dialog 
 
 The privileged one-time surface (spec §4). Round-1 fixes: `install`/`enroll`/`enroll-file`/`enroll-dir`/`_render-plist`/`_render-managed`/`_blink-test` now have **concrete dispatch cases**; `runPrivileged` **checks `terminationStatus`** and stops at first failure; `negativeBlinkTest` **terminates the leaked signer** before the positive control; CLI args are **bounds-checked**; `enroll-file` writes the custody registry; the acceptance example uses `~/Library/LaunchAgents` dir-custody (not a live ssh key). Helpers `[SW]`; installs `[USER-RUN]`.
 
-**Files:** Create `Sources/CCFidoCore/CLIHelpers.swift`; Modify `Sources/cc-fido/main.swift`; Test `Tests/CCFidoCoreTests/CLIHelperTests.swift`; Test (USER-RUN) `tests/userrun/task7_install.sh`, `tests/userrun/task7_enroll.sh`
+**Files:** Create `Sources/CCFidoCore/CLIHelpers.swift`; Modify `Sources/cc-fido/main.swift`; Test `Tests/CCFidoCoreTests/CLIHelperTests.swift`; Test (USER-RUN) `scripts/userrun/task7_install.sh`, `scripts/userrun/task7_enroll.sh`
 
 **Interfaces produced:** `renderPlist(binary:) -> String`; `renderManagedSettings(hookCmd:) -> String`; `ccVersion(_:) -> String`; `negativeBlinkTest(handle:namespace:window:) -> Bool`; `runPrivileged(_ argv: [String]) -> Bool`.
 
@@ -1684,7 +1684,7 @@ case "enroll-dir":
 - [ ] **Step 7: `[USER-RUN]` Install script** (codesign, managed-settings, root-owned policy, canary, ≥1-key gate)
 
 ```bash
-# tests/userrun/task7_install.sh — full privileged install + canary. Requires sudo.
+# scripts/userrun/task7_install.sh — full privileged install + canary. Requires sudo.
 #!/bin/bash
 set -eu -o pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -1703,7 +1703,7 @@ sudo chown _ccfido /var/ccfido /var/ccfido-run; sudo chmod 700 /var/ccfido; sudo
 /opt/cc-fido-gate/cc-fido _render-managed | sudo tee "/Library/Application Support/ClaudeCode/managed-settings.json" >/dev/null
 /opt/cc-fido-gate/cc-fido --version 2>/dev/null | sudo tee /var/ccfido/cc-version >/dev/null || true
 if ! sudo test -s /var/ccfido/allowed_signers; then
-  echo "Prereqs installed. Next: run  bash tests/userrun/task7_enroll.sh  to enroll a key, then re-run THIS script to activate the daemon."
+  echo "Prereqs installed. Next: run  bash scripts/userrun/task7_enroll.sh  to enroll a key, then re-run THIS script to activate the daemon."
   exit 0
 fi
 sudo launchctl bootstrap system /Library/LaunchDaemons/com.cc-fido-gate.brokerd.plist
@@ -1723,12 +1723,12 @@ echo "=== install complete ==="
 
 *(`set -o pipefail` guards the `_render-*` pipelines. The canary is **non-destructive** (no `sudo tee` over the trust store — the round-2 CRITICAL) and now captures the write's output separately so `pipefail` can't turn `cc-fido write`'s correct non-zero deny into a false canary FAIL (round-3 codex HIGH); a real failure `exit 1`s the install. The `exit 0` prereqs-only path breaks the install↔enroll circularity: run install → enroll → re-run install to activate.)*
 
-Run (user): `! bash tests/userrun/task7_install.sh` — Expect refusal until a key is enrolled, then codesigned binary + daemon booted.
+Run (user): `! bash scripts/userrun/task7_install.sh` — Expect refusal until a key is enrolled, then codesigned binary + daemon booted.
 
 - [ ] **Step 8: `[USER-RUN]` Enroll script** (2 dedicated keys, negative blink-test)
 
 ```bash
-# tests/userrun/task7_enroll.sh
+# scripts/userrun/task7_enroll.sh
 #!/bin/bash
 set -eu
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"; SIGN=/opt/homebrew/opt/openssh/bin/ssh-keygen
@@ -1746,9 +1746,9 @@ echo "=== negative blink-test (key #1) ==="
 "$BIN" _blink-test "$HOME/.ccfido/gate_sk1" && echo "PASS: touch-required verified" || echo "FAIL"
 ```
 
-Run (user): `! bash tests/userrun/task7_enroll.sh` — Expect 2 touches; withhold→no sig, touch→signs → `PASS`.
+Run (user): `! bash scripts/userrun/task7_enroll.sh` — Expect 2 touches; withhold→no sig, touch→signs → `PASS`.
 
-- [ ] **Step 9: Commit** — `git add tests/userrun/task7_install.sh tests/userrun/task7_enroll.sh && git commit -m "feat(cli): USER-RUN install (pipefail, key-gated, codesigned) + enroll (blink-test) scripts"`
+- [ ] **Step 9: Commit** — `git add scripts/userrun/task7_install.sh scripts/userrun/task7_enroll.sh && git commit -m "feat(cli): USER-RUN install (pipefail, key-gated, codesigned) + enroll (blink-test) scripts"`
 
 - [ ] **Step 10: `[USER-RUN]` Full-system acceptance + teardown**
 
