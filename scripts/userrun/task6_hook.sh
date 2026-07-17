@@ -1,8 +1,13 @@
 #!/bin/bash
-set -u
+set -eu -o pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"; CLAUDE_BIN="${CLAUDE_BIN:-/Users/sean/.local/bin/claude}"
 swift build -c release --package-path "$REPO"; BIN="$REPO/.build/release/cc-fido"
-sudo mkdir -p /opt/cc-fido-gate; sudo cp "$REPO/install/policy.json" /opt/cc-fido-gate/policy.json
+sudo mkdir -p /opt/cc-fido-gate
+POLICY_CAND=/opt/cc-fido-gate/policy.json.new
+trap 'sudo rm -f "$POLICY_CAND"' EXIT
+"$BIN" _render-policy "$REPO/install/policy.json" "$HOME" | sudo tee "$POLICY_CAND" >/dev/null
+sudo test -s "$POLICY_CAND"
+sudo mv "$POLICY_CAND" /opt/cc-fido-gate/policy.json
 sudo chown root:wheel /opt/cc-fido-gate/policy.json; sudo chmod 644 /opt/cc-fido-gate/policy.json
 mkdir -p /tmp/claude/ccfg-task6; D=$(mktemp -d /tmp/claude/ccfg-task6/run.XXXXXX)
 cat > "$D/settings.json" <<JSON

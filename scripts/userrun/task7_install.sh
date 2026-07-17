@@ -7,7 +7,15 @@ sudo bash "$REPO/task0-broker/probes/account-setup.sh"
 sudo mkdir -p /opt/cc-fido-gate /var/ccfido /var/ccfido-run "/Library/Application Support/ClaudeCode"
 sudo cp "$BIN" /opt/cc-fido-gate/cc-fido
 sudo codesign --force --options runtime --sign - /opt/cc-fido-gate/cc-fido
-sudo cp "$REPO/install/policy.json" /opt/cc-fido-gate/policy.json
+# Render (substitute __HOME__, validate, lint) → root-owned candidate → atomic mv. Never stages a
+# user-owned file (TOCTOU) and never truncates the live policy (atomic). Aborts (set -e/pipefail) on
+# a bad or blanket policy, leaving any existing /opt/cc-fido-gate/policy.json intact.
+POLICY_SRC="${POLICY:-$REPO/install/policy.json}"
+POLICY_CAND=/opt/cc-fido-gate/policy.json.new
+trap 'sudo rm -f "$POLICY_CAND"' EXIT
+/opt/cc-fido-gate/cc-fido _render-policy "$POLICY_SRC" "$HOME" | sudo tee "$POLICY_CAND" >/dev/null
+sudo test -s "$POLICY_CAND"          # non-empty ⇒ render succeeded (emit-on-valid-only)
+sudo mv "$POLICY_CAND" /opt/cc-fido-gate/policy.json
 sudo chown -R root:wheel /opt/cc-fido-gate; sudo chmod 755 /opt/cc-fido-gate; sudo chmod 644 /opt/cc-fido-gate/policy.json
 sudo chown _ccfido /var/ccfido /var/ccfido-run; sudo chmod 700 /var/ccfido; sudo chmod 755 /var/ccfido-run
 # Prereqs are now installed. Break the install<->enroll circularity: if no key is enrolled yet, STOP here
