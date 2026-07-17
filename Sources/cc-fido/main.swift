@@ -47,6 +47,9 @@ case "_cc-version":   // record the Claude Code version for the install-time re-
 case "_blink-test":
     guard args.count >= 2 else { usage() }
     exit(negativeBlinkTest(handle: args[1], namespace: Paths.namespace) ? 0 : 1)
+case "_verify-audit":   // runs AS _ccfido so it can read the 0600 _ccfido-owned audit log
+    if auditVerifyChain() { print("audit chain OK"); exit(0) }
+    FileHandle.standardError.write(Data("audit chain BROKEN\n".utf8)); exit(1)
 // runs AS _ccfido (via `sudo -u _ccfido`) so it can write the 0600 _ccfido-owned custody.json:
 case "_registry-add":
     guard args.count >= 3, args[1] == "file" || args[1] == "dir" else { usage() }
