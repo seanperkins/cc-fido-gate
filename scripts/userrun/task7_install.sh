@@ -15,7 +15,8 @@ sudo chown _ccfido /var/ccfido /var/ccfido-run; sudo chmod 700 /var/ccfido; sudo
 # daemon is only activated on a re-run once a key exists.
 /opt/cc-fido-gate/cc-fido _render-plist | sudo tee /Library/LaunchDaemons/com.cc-fido-gate.brokerd.plist >/dev/null
 /opt/cc-fido-gate/cc-fido _render-managed | sudo tee "/Library/Application Support/ClaudeCode/managed-settings.json" >/dev/null
-/opt/cc-fido-gate/cc-fido --version 2>/dev/null | sudo tee /var/ccfido/cc-version >/dev/null || true
+CLAUDE_BIN="${CLAUDE_BIN:-/Users/sean/.local/bin/claude}"
+/opt/cc-fido-gate/cc-fido _cc-version "$CLAUDE_BIN" 2>/dev/null | sudo tee /var/ccfido/cc-version >/dev/null || true
 if ! sudo test -s /var/ccfido/allowed_signers; then
   echo "Prereqs installed. Next: run  bash scripts/userrun/task7_enroll.sh  to enroll a key, then re-run THIS script to activate the daemon."
   exit 0

@@ -33,6 +33,7 @@ public func ccVersion(_ claudeBin: String) -> String {
 @discardableResult
 public func runPrivileged(_ argv: [String]) -> Bool {
     let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo"); p.arguments = argv
+    p.environment = scrubbedEnv()   // same invariant as every other spawned child (Task-7 review)
     do { try p.run() } catch { return false }
     p.waitUntilExit(); return p.terminationStatus == 0
 }

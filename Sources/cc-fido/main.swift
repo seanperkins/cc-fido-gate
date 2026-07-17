@@ -18,14 +18,15 @@ func enrollSteps(_ plan: [[String]]) {
     }
 }
 // on registry-add failure, undo the lock so the file returns to its pre-enroll (usable) state.
-// Restores the CAPTURED original uid (not an assumed one), and reports whether every step succeeded.
-func rollbackFileLock(_ path: String, toUID uid: UInt32) {
+// Restores the CAPTURED original uid AND mode (not assumed ones), and reports whether every step succeeded.
+func rollbackFileLock(_ path: String, toUID uid: UInt32, toMode mode: mode_t) {
     let unlocked = runPrivileged(["/usr/bin/chflags", "nouchg", path])
     let chowned = runPrivileged(["/usr/sbin/chown", String(uid), path])
-    if unlocked && chowned {
-        FileHandle.standardError.write(Data("cc-fido: rolled back lock on \(path)\n".utf8))
+    let chmoded = runPrivileged(["/bin/chmod", String(mode & 0o7777, radix: 8), path])
+    if unlocked && chowned && chmoded {
+        FileHandle.standardError.write(Data("cc-fido: rolled back lock on \(path) (uid+mode restored)\n".utf8))
     } else {
-        FileHandle.standardError.write(Data("cc-fido: ROLLBACK INCOMPLETE on \(path) (nouchg=\(unlocked) chown=\(chowned)) — the file may still be _ccfido-owned/locked; fix manually\n".utf8))
+        FileHandle.standardError.write(Data("cc-fido: ROLLBACK INCOMPLETE on \(path) (nouchg=\(unlocked) chown=\(chowned) chmod=\(chmoded)) — fix manually\n".utf8))
     }
 }
 
@@ -40,6 +41,9 @@ case "write":
     exit(runWrite(path: args[1], content: FileHandle.standardInput.readDataToEndOfFile()))
 case "_render-plist": print(renderPlist()); exit(0)
 case "_render-managed": print(renderManagedSettings(hookCmd: Paths.code + "/cc-fido hook")); exit(0)
+case "_cc-version":   // record the Claude Code version for the install-time re-probe
+    guard args.count >= 2 else { usage() }
+    print(ccVersion(args[1])); exit(0)
 case "_blink-test":
     guard args.count >= 2 else { usage() }
     exit(negativeBlinkTest(handle: args[1], namespace: Paths.namespace) ? 0 : 1)
@@ -58,13 +62,15 @@ case "enroll-file":
     let path = (args[1] as NSString).standardizingPath
     let mode = args.count > 2 ? (Int(args[2], radix: 8) ?? 0o600) : 0o600
     warnAncestors(path)
-    var pre = stat(); let origUID = (lstat(path, &pre) == 0) ? pre.st_uid : getuid()  // capture owner BEFORE enroll
+    var pre = stat(); let hadStat = lstat(path, &pre) == 0    // capture owner+mode BEFORE enroll
+    let origUID = hadStat ? pre.st_uid : getuid()
+    let origMode = hadStat ? pre.st_mode : mode_t(0o600)
     // Lock FIRST, then register. This ordering fails SAFE: a registry failure leaves the file
     // locked-but-unregistered (over-protected, `cc-fido write` won't touch it) — never
     // registered-but-writable (which would advertise protection it doesn't have). We roll the lock back.
     enrollSteps(planEnrollFile(path, mode: mode))
     if !runPrivileged(["-u", "_ccfido", Paths.code + "/cc-fido", "_registry-add", "file", path]) {
-        rollbackFileLock(path, toUID: origUID)
+        rollbackFileLock(path, toUID: origUID, toMode: origMode)
         FileHandle.standardError.write(Data("cc-fido: registry add failed for \(path)\n".utf8)); exit(1)
     }
     print("cc-fido: enrolled + registered file \(path)"); exit(0)
