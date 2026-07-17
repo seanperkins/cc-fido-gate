@@ -119,10 +119,11 @@ public final class Broker {
         let nonce = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
         let doc = buildSignedDocument(op: "execute-write", path: norm,
                                       contentSha256: sha256Hex(content),
-                                      cwd: req["cwd"] as? String ?? "", nonceHex: nonce, callerUid: caller)
+                                      cwd: req["cwd"] as? String ?? "", nonceHex: nonce, callerUid: caller,
+                                      contentMode: content.count > INLINE_MAX ? "digest" : "inline")
         let challenge = try canonicalBytes(doc)
         try sendMsg(fd, ["phase": "challenge", "challenge_b64": challenge.base64EncodedString(),
-                         "human_rendering": "WRITE \(norm)\n\(content.count) bytes  sha256:\(doc.contentSha256)"])
+                         "human_rendering": humanRendering(doc, content: content)])
         let reply = try recvMsg(fd)
         guard reply["phase"] as? String == "signature",
               let sigB64 = reply["signature_b64"] as? String, let sig = Data(base64Encoded: sigB64),
