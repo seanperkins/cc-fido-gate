@@ -44,6 +44,14 @@ NotebookEdit (M3), plus the per-task review fixes already committed. The below s
   entry (last-writer-wins on the whole file). Low risk: enrollment is serial admin. Fix: flock the
   registry file across the RMW.
 
+## Operational (hardware-verified 2026-07-17)
+- **launchd broker needs a `kickstart` if a stale socket is present.** After prior *manual* daemon runs
+  (`sudo -u _ccfido cc-fido daemon &`, as in task3/4/6), the LaunchDaemon-started broker can bind while an
+  orphaned socket file shadows it — clients then get `cc-fido: broker unreachable` even though the daemon is
+  up (`runs=1`, holds the socket via lsof). `sudo launchctl kickstart -k system/com.cc-fido-gate.brokerd`
+  re-binds a fresh socket and fixes it. A clean install with no manual-daemon churn is unaffected. Consider
+  having `install` kickstart after bootstrap, or `serve()` refusing to start if another daemon is live.
+
 ## Minor / cosmetic
 - **Client — Cancel now hard-kills a live signer** (introduced by the touch-from-the-get-go ceremony,
   `confirmAndSign`). Because the key is armed concurrently with the dialog, clicking Cancel `terminate()`s a

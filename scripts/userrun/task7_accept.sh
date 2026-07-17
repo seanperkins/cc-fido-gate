@@ -17,7 +17,9 @@ echo "=== 2. agent-uid CANNOT create a plist in the enrolled dir (C-3 dir custod
 touch "$LA/x.plist" 2>/dev/null && fail "created plist in locked dir" || pass "create denied in ~/Library/LaunchAgents"
 
 echo "=== 3. enroll a benign file: direct write EACCES, broker write works after a touch ==="
-[ -e "$BENIGN" ] || echo before > "$BENIGN"
+# Reset to a fresh, unlocked, caller-owned file so a re-run isn't blocked by a leftover uchg lock
+# from a prior enroll (chown of a uchg'd file fails with Operation not permitted):
+sudo chflags nouchg "$BENIGN" 2>/dev/null; sudo rm -f "$BENIGN"; echo before > "$BENIGN"
 "$BIN" enroll-file "$BENIGN" || { echo "  enroll-file failed — ABORT"; exit 1; }
 echo hostile > "$BENIGN" 2>/dev/null && fail "direct write succeeded (should be denied)" || pass "direct write denied (uchg/EACCES)"
 echo ">>> APPROVE + TOUCH to write via the broker <<<"
