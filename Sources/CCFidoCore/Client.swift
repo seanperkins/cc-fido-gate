@@ -54,3 +54,20 @@ public func runWrite(path: String, content: Data, sockPath: String = Paths.sock)
         FileHandle.standardError.write(Data("cc-fido: denied (\(result["reason"] ?? ""))\n".utf8)); return 1
     } catch { return 1 }
 }
+
+public func runApprove(tool: String, toolInput: [String: Any], cwd: String, sockPath: String = Paths.sock) -> Bool {
+    let fd = connectSock(sockPath); guard fd >= 0 else { return false }
+    defer { close(fd) }
+    do {
+        try sendMsg(fd, ["op": "approve", "tool": tool, "input": toolInput, "cwd": cwd])
+        let msg = try recvMsg(fd)
+        guard let human = msg["human_rendering"] as? String, let chB64 = msg["challenge_b64"] as? String,
+              let challenge = Data(base64Encoded: chB64) else { return false }
+        if !dialog(human) { try sendMsg(fd, ["phase": "abort", "reason": "cancelled"]); return false }
+        let sig: Data
+        do { sig = try sign(challenge: challenge, handlePath: Paths.handle, namespace: Paths.namespace) }
+        catch { try sendMsg(fd, ["phase": "abort", "reason": "sign failed"]); return false }
+        try sendMsg(fd, ["phase": "signature", "signature_b64": sig.base64EncodedString()])
+        return (try recvMsg(fd))["status"] as? String == "ok"
+    } catch { return false }
+}

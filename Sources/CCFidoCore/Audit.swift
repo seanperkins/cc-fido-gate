@@ -28,3 +28,13 @@ public func auditAppend(_ entry: [String: Any], path: String = Paths.audit) thro
     fsync(fd)
     if !ok { throw WireError.eof }
 }
+
+public func auditVerifyChain(path: String = Paths.audit) -> Bool {
+    var prev = String(repeating: "0", count: 64)
+    for (i, line) in auditLines(path).enumerated() {
+        guard let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+              obj["seq"] as? Int == i, obj["prev_hash"] as? String == prev else { return false }
+        prev = sha256Hex(Data(line.utf8))
+    }
+    return true
+}

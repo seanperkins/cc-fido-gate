@@ -104,8 +104,39 @@ public final class Broker {
     func handle(_ fd: Int32) throws {
         let caller = peerUID(fd)
         let req = try recvMsg(fd)
-        guard req["op"] as? String == "execute-write",
-              let path = req["path"] as? String,
+        switch req["op"] as? String {
+        case "execute-write": try handleExecuteWrite(fd, req, caller)
+        case "approve": try handleApprove(fd, req, caller)
+        default:
+            try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "bad request"])
+        }
+    }
+
+    // approve: best-effort verdict, no write. Challenges over the SAME canonicalJSON payload that
+    // decideApprove built, verifies the signature against that SAME challenge, audits approve_ok — never
+    // calls uchgWrite.
+    func handleApprove(_ fd: Int32, _ req: [String: Any], _ caller: Int) throws {
+        guard let (challengeB64, human) = try? decideApprove(req, caller: caller) else {
+            try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "bad request"]); return
+        }
+        guard let challenge = Data(base64Encoded: challengeB64) else {
+            try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "bad request"]); return
+        }
+        try sendMsg(fd, ["phase": "challenge", "challenge_b64": challengeB64, "human_rendering": human])
+        let reply = try recvMsg(fd)
+        guard reply["phase"] as? String == "signature",
+              let sigB64 = reply["signature_b64"] as? String, let sig = Data(base64Encoded: sigB64),
+              verify(challenge: challenge, signature: sig, allowedSigners: allowedSigners,
+                     principal: Paths.principal, namespace: Paths.namespace) else {
+            try auditAppend(["event": "deny", "op": "approve", "caller": caller])
+            try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "no valid touch"]); return
+        }
+        try auditAppend(["event": "approve_ok", "caller": caller])
+        try sendMsg(fd, ["phase": "result", "status": "ok"])
+    }
+
+    func handleExecuteWrite(_ fd: Int32, _ req: [String: Any], _ caller: Int) throws {
+        guard let path = req["path"] as? String,
               let b64 = req["content_b64"] as? String,
               let content = Data(base64Encoded: b64) else {
             try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "bad request"]); return
@@ -198,5 +229,20 @@ public final class Broker {
         if flock(lockFD, LOCK_EX) != 0 { close(lockFD); return }
         defer { flock(lockFD, LOCK_UN); close(lockFD) }
         do { try handle(conn) } catch { /* malformed/aborted/deadline: drop */ }
+    }
+}
+
+extension Broker {
+    public func decideApprove(_ req: [String: Any], caller: Int) throws -> (challengeB64: String, human: String) {
+        guard let tool = req["tool"] as? String else { throw WireError.badBody }
+        let payload = try canonicalJSON(["tool": tool, "input": req["input"] ?? [:],
+                                         "cwd": req["cwd"] as? String ?? ""])
+        let doc = buildSignedDocument(op: "approve", path: tool, contentSha256: sha256Hex(payload),
+                                      cwd: req["cwd"] as? String ?? "",
+                                      nonceHex: (0..<16).map { _ in String(format:"%02x", UInt8.random(in:0...255)) }.joined(),
+                                      callerUid: caller)
+        // humanRendering already prints "APPROVE <tool>" (doc.op/doc.path) — don't double it (round-2 cosmetic).
+        let human = humanRendering(doc, content: payload)
+        return (try canonicalBytes(doc).base64EncodedString(), human)
     }
 }
