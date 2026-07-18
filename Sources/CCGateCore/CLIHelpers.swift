@@ -1,17 +1,18 @@
 import Foundation
 import Darwin
 
-public func renderPlist(binary: String = Paths.code + "/cc-fido") -> String {
-    """
+public func renderPlist(profile: GateProfile) -> String {
+    let binary = profile.codeDir + "/" + profile.binaryName
+    return """
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0"><dict>
-      <key>Label</key><string>com.cc-fido-gate.brokerd</string>
-      <key>UserName</key><string>_ccfido</string>
+      <key>Label</key><string>\(profile.launchdLabel)</string>
+      <key>UserName</key><string>\(profile.serviceAccount)</string>
       <key>ProgramArguments</key><array><string>\(binary)</string><string>daemon</string></array>
       <key>KeepAlive</key><true/>
       <key>RunAtLoad</key><true/>
-      <key>StandardErrorPath</key><string>/var/ccfido/brokerd.err</string>
+      <key>StandardErrorPath</key><string>\(profile.daemonLogErr)</string>
     </dict></plist>
     """
 }

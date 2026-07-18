@@ -43,22 +43,22 @@ public struct StatusReport: Codable {
 }
 
 /// `home` is the LOGIN user's home (see `realLoginHome()` in main.swift), passed in rather than
-/// derived from `Paths.handle`/`NSHomeDirectory()` because `status` is unprivileged and may run
-/// under `sudo` (where `NSHomeDirectory()` would resolve to root's home, not the login user's).
-public func gatherStatus(platform: Platform, home: String, enroller: Enroller) -> StatusReport {
+/// derived from the signer's handle path / `NSHomeDirectory()` because `status` is unprivileged and
+/// may run under `sudo` (where `NSHomeDirectory()` would resolve to root's home, not the login user's).
+public func gatherStatus(platform: Platform, home: String, enroller: Enroller, profile: GateProfile) -> StatusReport {
     let fm = FileManager.default
-    let account = platform.serviceAccountExists(name: "_ccfido")
-    let dirs = fm.fileExists(atPath: Paths.keydir) && fm.fileExists(atPath: Paths.runDir)
-    let binary = fm.fileExists(atPath: Paths.code + "/cc-fido")
-    let policyValid = (try? Policy.fromFile(Paths.policy)) != nil
-    // Privilege-independent probe: `allowed_signers` is root/_ccfido-owned 0600 inside /var/ccfido
+    let account = platform.serviceAccountExists(name: profile.serviceAccount)
+    let dirs = fm.fileExists(atPath: profile.keydir) && fm.fileExists(atPath: profile.runDir)
+    let binary = fm.fileExists(atPath: profile.codeDir + "/" + profile.binaryName)
+    let policyValid = (try? Policy.fromFile(profile.policy)) != nil
+    // Privilege-independent probe: `allowed_signers` is root/service-account-owned 0600 inside keydir
     // (mode 0700), unreadable to the login user `status` runs as. Instead check for the enroll
     // handle (`runEnroll` in Enroll.swift symlinks it) in the login user's OWN home, which they
     // can always read. This means `key_enrolled` now signals "this login user has completed
     // enrollment," not "allowed_signers is non-empty."
     let keyEnrolled = enroller.isEnrolled(home: home)
     let daemonRunning = platform.daemonState().running
-    let managed = fm.fileExists(atPath: Paths.managedSettings)
+    let managed = fm.fileExists(atPath: profile.managedSettings)
     return StatusReport(account: account, dirs: dirs, binary: binary, policyValid: policyValid,
                         keyEnrolled: keyEnrolled, daemonRunning: daemonRunning, managedSettings: managed)
 }

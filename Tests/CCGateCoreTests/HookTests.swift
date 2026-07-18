@@ -8,7 +8,7 @@ final class HookTests: XCTestCase {
     private func run(_ e: [String: Any], _ approve: @escaping (String, [String: Any], String) -> Bool)
         -> (Int32, String, String) {
         let o = Pipe(), er = Pipe()
-        let c = decideAndEmit(event: e, policy: pol, out: o.fileHandleForWriting, err: er.fileHandleForWriting, approve: approve)
+        let c = decideAndEmit(event: e, policy: pol, profile: testProfile, out: o.fileHandleForWriting, err: er.fileHandleForWriting, approve: approve)
         try? o.fileHandleForWriting.close(); try? er.fileHandleForWriting.close()
         return (c, String(data: o.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
                 String(data: er.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")

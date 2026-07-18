@@ -2,13 +2,14 @@ import XCTest
 import Foundation
 @testable import CCGateCore
 
-private struct StubVerifier: Verifier {
+// Shared across CCGateCoreTests (internal, not private) — e.g. BrokerAllowlistTests also needs a Broker.
+struct StubVerifier: Verifier {
     func verify(challenge: Data, signature: Data) -> Bool { false }
 }
 
 final class BrokerLogicTests: XCTestCase {
     func testDecideApproveCompilesAndBindsInput() throws {
-        let b = Broker(verifier: StubVerifier())
+        let b = Broker(profile: testProfile, verifier: StubVerifier())
         let d = try b.decideApprove(["op": "approve", "tool": "Bash",
                                      "input": ["command": "git push --force"], "cwd": "/tmp"], caller: 501)
         XCTAssertTrue(d.human.contains("git push --force"))

@@ -8,7 +8,7 @@ public func sha256Hex(_ data: Data) -> String {
 func auditLines(_ path: String) -> [String] {
     (try? String(contentsOfFile: path, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
 }
-public func auditAppend(_ entry: [String: Any], path: String = Paths.audit) throws {
+public func auditAppend(_ entry: [String: Any], path: String) throws {
     // Serialize the hash-chain read-modify-write (read all lines → derive seq/prev_hash → append). This is
     // the ONLY shared state that must be serial across concurrent ceremonies; the broker no longer holds a
     // ceremony-wide lock (that one serialized the human-touch wait, letting a slow client starve every write
@@ -43,7 +43,7 @@ public func auditAppend(_ entry: [String: Any], path: String = Paths.audit) thro
     if !ok { throw WireError.eof }
 }
 
-public func auditVerifyChain(path: String = Paths.audit) -> Bool {
+public func auditVerifyChain(path: String) -> Bool {
     var prev = String(repeating: "0", count: 64)
     for (i, line) in auditLines(path).enumerated() {
         guard let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],

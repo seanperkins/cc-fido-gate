@@ -34,7 +34,8 @@ func run(_ path: String, _ args: [String]) -> (Int32, String, String) {
 }
 
 public struct MacOSPlatform: Platform {
-    public init() {}
+    let profile: GateProfile
+    public init(profile: GateProfile) { self.profile = profile }
     public func serviceAccountExists(name: String) -> Bool {
         // Check IsHidden — the LAST attribute `-create`d below — as a completion sentinel, not
         // UniqueID. UniqueID is written early, so a half-formed record (interrupted create, has a
@@ -68,7 +69,7 @@ public struct MacOSPlatform: Platform {
             // completion sentinel.
             for arg in [["-create", "/Users/\(name)"],
                         ["-create", "/Users/\(name)", "UserShell", "/usr/bin/false"],
-                        ["-create", "/Users/\(name)", "RealName", "cc-fido broker"],
+                        ["-create", "/Users/\(name)", "RealName", profile.accountRealName],
                         ["-create", "/Users/\(name)", "UniqueID", String(uid)],
                         ["-create", "/Users/\(name)", "PrimaryGroupID", "20"],
                         ["-create", "/Users/\(name)", "NFSHomeDirectory", "/var/empty"],
@@ -87,31 +88,31 @@ public struct MacOSPlatform: Platform {
         _ = run("/usr/bin/dscl", [".", "-delete", "/Users/\(name)"])   // idempotent; ignore "not found"
     }
     public func installDaemonPlist(_ xml: String) throws {
-        try xml.write(toFile: Paths.plist, atomically: true, encoding: .utf8)
-        _ = run("/usr/sbin/chown", ["root:wheel", Paths.plist]); _ = run("/bin/chmod", ["644", Paths.plist])
+        try xml.write(toFile: profile.plist, atomically: true, encoding: .utf8)
+        _ = run("/usr/sbin/chown", ["root:wheel", profile.plist]); _ = run("/bin/chmod", ["644", profile.plist])
     }
     public func activateDaemon() throws {
-        _ = run("/bin/launchctl", ["bootout", "system", Paths.plist])                 // ||true — may not be loaded
-        let b = run("/bin/launchctl", ["bootstrap", "system", Paths.plist])
+        _ = run("/bin/launchctl", ["bootout", "system", profile.plist])               // ||true — may not be loaded
+        let b = run("/bin/launchctl", ["bootstrap", "system", profile.plist])
         if b.0 != 0 { throw PlatformError.failed("bootstrap: \(b.2)") }
-        _ = run("/bin/launchctl", ["kickstart", "-k", "system/\(Paths.launchdLabel)"]) // fresh socket
+        _ = run("/bin/launchctl", ["kickstart", "-k", "system/\(profile.launchdLabel)"]) // fresh socket
     }
     public func bootoutDaemon() throws {
-        _ = run("/bin/launchctl", ["bootout", "system", Paths.plist])
-        _ = run("/usr/bin/pkill", ["-f", "cc-fido daemon"])
+        _ = run("/bin/launchctl", ["bootout", "system", profile.plist])
+        _ = run("/usr/bin/pkill", ["-f", profile.daemonMatchPattern])
     }
     public func daemonState() -> (loaded: Bool, running: Bool, pid: Int?) {
         // Socket-reachability is the authoritative "running" signal and works as any uid (0666 socket).
-        let reachable = { () -> Bool in let fd = connectSock(Paths.sock); if fd >= 0 { close(fd); return true }; return false }()
-        let loaded = FileManager.default.fileExists(atPath: Paths.plist)
+        let reachable = { () -> Bool in let fd = connectSock(profile.sock); if fd >= 0 { close(fd); return true }; return false }()
+        let loaded = FileManager.default.fileExists(atPath: profile.plist)
         return (loaded, reachable, nil)
     }
     public func writeManagedSettings(_ json: String) throws {
-        try FileManager.default.createDirectory(atPath: Paths.claudeCodeDir, withIntermediateDirectories: true)
-        try json.write(toFile: Paths.managedSettings, atomically: true, encoding: .utf8)
-        _ = run("/usr/sbin/chown", ["root:wheel", Paths.managedSettings]); _ = run("/bin/chmod", ["644", Paths.managedSettings])
+        try FileManager.default.createDirectory(atPath: profile.claudeCodeDir, withIntermediateDirectories: true)
+        try json.write(toFile: profile.managedSettings, atomically: true, encoding: .utf8)
+        _ = run("/usr/sbin/chown", ["root:wheel", profile.managedSettings]); _ = run("/bin/chmod", ["644", profile.managedSettings])
     }
-    public func removeManagedSettings() throws { try? FileManager.default.removeItem(atPath: Paths.managedSettings) }
+    public func removeManagedSettings() throws { try? FileManager.default.removeItem(atPath: profile.managedSettings) }
     public func makeImmutable(_ path: String) throws {
         if run("/usr/bin/chflags", ["uchg", path]).0 != 0 { throw PlatformError.failed("chflags uchg \(path)") }
     }

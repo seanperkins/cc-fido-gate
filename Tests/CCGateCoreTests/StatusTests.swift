@@ -39,11 +39,11 @@ final class StatusTests: XCTestCase {
     // FIDO checks its on-disk handle, a future SE backend would query the keychain instead).
     func testGatherStatusKeyEnrolledWhenEnrollerSaysSo() {
         let enroller = MockEnroller(); enroller.enrolled = true
-        let report = gatherStatus(platform: MockPlatform(), home: "/tmp/unused", enroller: enroller)
+        let report = gatherStatus(platform: MockPlatform(), home: "/tmp/unused", enroller: enroller, profile: testProfile)
         XCTAssertTrue(report.keyEnrolled)
     }
     func testGatherStatusKeyNotEnrolledWhenEnrollerSaysSo() {
-        let report = gatherStatus(platform: MockPlatform(), home: "/tmp/unused", enroller: MockEnroller())
+        let report = gatherStatus(platform: MockPlatform(), home: "/tmp/unused", enroller: MockEnroller(), profile: testProfile)
         XCTAssertFalse(report.keyEnrolled)
     }
 }

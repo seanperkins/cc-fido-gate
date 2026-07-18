@@ -4,13 +4,13 @@ import Foundation
 
 final class CustodyTests: XCTestCase {
     func testPlanEnrollFile() {
-        XCTAssertEqual(planEnrollFile("/tmp/x/.env", mode: 0o600), [
+        XCTAssertEqual(planEnrollFile("/tmp/x/.env", mode: 0o600, profile: testProfile), [
             ["/usr/sbin/chown", "_ccfido", "/tmp/x/.env"],
             ["/bin/chmod", "600", "/tmp/x/.env"],
             ["/usr/bin/chflags", "uchg", "/tmp/x/.env"]])
     }
     func testPlanEnrollDir() {
-        XCTAssertEqual(planEnrollDir("/tmp/LA"), [
+        XCTAssertEqual(planEnrollDir("/tmp/LA", profile: testProfile), [
             ["/usr/sbin/chown", "_ccfido", "/tmp/LA"], ["/bin/chmod", "755", "/tmp/LA"]])
     }
     func testWritableAncestorDetected() throws {

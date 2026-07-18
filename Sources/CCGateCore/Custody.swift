@@ -1,12 +1,12 @@
 import Foundation
 import Darwin
 
-public func planEnrollFile(_ path: String, mode: Int) -> [[String]] {
-    [["/usr/sbin/chown", "_ccfido", path], ["/bin/chmod", String(mode, radix: 8), path],
+public func planEnrollFile(_ path: String, mode: Int, profile: GateProfile) -> [[String]] {
+    [["/usr/sbin/chown", profile.serviceAccount, path], ["/bin/chmod", String(mode, radix: 8), path],
      ["/usr/bin/chflags", "uchg", path]]
 }
-public func planEnrollDir(_ path: String) -> [[String]] {
-    [["/usr/sbin/chown", "_ccfido", path], ["/bin/chmod", "755", path]]
+public func planEnrollDir(_ path: String, profile: GateProfile) -> [[String]] {
+    [["/usr/sbin/chown", profile.serviceAccount, path], ["/bin/chmod", "755", path]]
 }
 /// Ancestors NOT owned by a safe principal OR group/other-writable (agent could swap them). lstat: no follow.
 public func checkAncestors(_ path: String, safeOwners: Set<Int>) -> [String] {
@@ -27,12 +27,12 @@ public func checkAncestors(_ path: String, safeOwners: Set<Int>) -> [String] {
     return bad
 }
 public enum CustodyRegistry {
-    public static func load(path: String = Paths.custody) -> (files: [String], dirs: [String]) {
+    public static func load(path: String) -> (files: [String], dirs: [String]) {
         guard let d = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return ([], []) }
         return (o["files"] as? [String] ?? [], o["dirs"] as? [String] ?? [])
     }
-    public static func add(file: String?, dir: String?, path: String = Paths.custody) throws {
+    public static func add(file: String?, dir: String?, path: String) throws {
         var (files, dirs) = load(path: path)
         // Normalize via Broker.normPath (the SAME normalization the broker uses at comparison time) so
         // /private/var/foo and /var/foo dedup to one entry — idempotency contract (Task-4 review). NOT

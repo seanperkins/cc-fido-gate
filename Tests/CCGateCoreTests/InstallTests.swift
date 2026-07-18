@@ -5,8 +5,8 @@ final class InstallTests: XCTestCase {
     func testInstallRequestsPlatformOpsAndIsIdempotent() throws {
         let p = MockPlatform()
         // installPrereqs must: create account (once), install the plist, write managed-settings.
-        try installOrchestration(platform: p)          // pure part under test (see impl note)
-        try installOrchestration(platform: p)          // re-run: account already exists ⇒ not re-created
+        try installOrchestration(platform: p, profile: testProfile)          // pure part under test (see impl note)
+        try installOrchestration(platform: p, profile: testProfile)          // re-run: account already exists ⇒ not re-created
         XCTAssertEqual(p.calls.filter { $0.hasPrefix("createAccount") }.count, 1)
         XCTAssertTrue(p.calls.contains("installPlist"))
         XCTAssertTrue(p.calls.contains("writeManaged"))
@@ -25,7 +25,7 @@ final class InstallTests: XCTestCase {
     func testUninstallUnlocksTargetsThenTearsDown() throws {
         let p = MockPlatform(); p.accountExists = true; p.daemon = (true, true, 9)
         let enroller = MockEnroller()
-        try uninstall(platform: p, enrolledTargets: ["/Users/Shared/x.txt"], home: "/Users/x", enroller: enroller)
+        try uninstall(platform: p, enrolledTargets: ["/Users/Shared/x.txt"], home: "/Users/x", enroller: enroller, profile: testProfile)
         XCTAssertTrue(p.calls.contains("nouchg(/Users/Shared/x.txt)"))  // unlocked before deletion
         XCTAssertTrue(p.calls.contains("bootoutDaemon"))
         XCTAssertTrue(p.calls.contains("removeManaged"))

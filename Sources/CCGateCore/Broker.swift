@@ -4,11 +4,11 @@ import Darwin
 public enum BrokerError: Error { case writeFailed(String) }
 
 public final class Broker {
-    let sockPath: String
-    let allowedSigners: String
+    let profile: GateProfile
     let verifier: Verifier
-    public init(sockPath: String = Paths.sock, allowedSigners: String = Paths.allowedSigners, verifier: Verifier) {
-        self.sockPath = sockPath; self.allowedSigners = allowedSigners; self.verifier = verifier
+    var sockPath: String { profile.sock }
+    public init(profile: GateProfile, verifier: Verifier) {
+        self.profile = profile; self.verifier = verifier
     }
 
     // --- authorization helpers (pure, [SW]-tested) ---
@@ -16,7 +16,7 @@ public final class Broker {
     /// and `/private/var…` (the form `F_GETPATH` returns) map to ONE string. NO `realpath` — realpathing
     /// only `norm` forked `/var` vs `/private/var` against the lexical constants + registry (round-3
     /// regression). Symlink-redirect defense is the `F_GETPATH` post-open re-check in `uchgWrite`, not
-    /// this string normalization.
+    /// this string normalization. Profile-independent — the firmlinked roots are a fixed platform fact.
     public static func normPath(_ path: String) -> String {
         let p = (path as NSString).standardizingPath
         // Only the ACTUAL macOS firmlinked roots fold — NOT every /private/* path (else /private/foo→/foo,
@@ -27,18 +27,20 @@ public final class Broker {
         }
         return p
     }
-    public static func isControlPath(_ path: String) -> Bool {
-        let p = normPath(path)
-        if Paths.controlDenylist.map(normPath).contains(p) { return true }
-        return p.hasPrefix(Paths.keydir + "/") || p == Paths.keydir
-            || p.hasPrefix(Paths.code + "/") || p == Paths.code
+    /// Profile-dependent — reads the product's own control-file roots.
+    func isControlPath(_ path: String) -> Bool {
+        let p = Broker.normPath(path)
+        if profile.controlDenylist.map(Broker.normPath).contains(p) { return true }
+        return p.hasPrefix(profile.keydir + "/") || p == profile.keydir
+            || p.hasPrefix(profile.codeDir + "/") || p == profile.codeDir
     }
+    /// Profile-independent — the registry itself carries the enrolled paths.
     public static func isEnrolledTarget(_ path: String, registry: [String]) -> Bool {
         let p = normPath(path)
         return registry.contains { normPath($0) == p }
     }
     func loadRegistry() -> [String] {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: Paths.custody)),
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: profile.custody)),
               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let files = obj["files"] as? [String] else { return [] }
         return files
@@ -47,13 +49,14 @@ public final class Broker {
     // nouchg -> O_NOFOLLOW open (NO O_TRUNC) -> validate the OPEN FD -> ftruncate -> write -> fsync -> checked uchg.
     // Round-3 fixes (codex CRITICAL + pentester HIGH): DO NOT O_TRUNC before validating — a redirect would
     // truncate the target before the fstat guard catches it, so we open without O_TRUNC and only ftruncate
-    // AFTER every check passes. fstat asserts regular + st_nlink==1 + owner==_ccfido, FAIL-CLOSED if the
-    // _ccfido lookup fails. Then F_GETPATH re-derives the ACTUALLY-OPENED path (fully symlink-resolved) and
-    // re-runs the control/enrolled checks on it — this is what closes the intermediate-directory-symlink
-    // redirect that O_NOFOLLOW (final-component only) cannot. `norm` is the already-validated enrolled target.
+    // AFTER every check passes. fstat asserts regular + st_nlink==1 + owner==the service account, FAIL-CLOSED
+    // if the service-account lookup fails. Then F_GETPATH re-derives the ACTUALLY-OPENED path (fully
+    // symlink-resolved) and re-runs the control/enrolled checks on it — this is what closes the
+    // intermediate-directory-symlink redirect that O_NOFOLLOW (final-component only) cannot. `norm` is the
+    // already-validated enrolled target.
     func uchgWrite(_ norm: String, _ content: Data, registry: [String]) throws {
-        guard let ccfidoUID = getpwnam("_ccfido").map({ $0.pointee.pw_uid }) else {
-            throw BrokerError.writeFailed("_ccfido lookup failed — refusing (fail closed)")
+        guard let serviceUID = getpwnam(profile.serviceAccount).map({ $0.pointee.pw_uid }) else {
+            throw BrokerError.writeFailed("service account lookup failed — refusing (fail closed)")
         }
         var relocked = false
         func relock() throws {
@@ -70,8 +73,8 @@ public final class Broker {
             defer { close(fd) }   // (close() errno on a write fd is not meaningfully recoverable after fsync)
             var st = stat()
             guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG,
-                  st.st_nlink == 1, st.st_uid == ccfidoUID else {
-                throw BrokerError.writeFailed("target is not a lone _ccfido-owned regular file (nlink/owner)")
+                  st.st_nlink == 1, st.st_uid == serviceUID else {
+                throw BrokerError.writeFailed("target is not a lone \(profile.serviceAccount)-owned regular file (nlink/owner)")
             }
             // Re-check the path the fd ACTUALLY points at (defeats intermediate-symlink ancestor swap):
             var pbuf = [Int8](repeating: 0, count: Int(PATH_MAX))
@@ -82,7 +85,7 @@ public final class Broker {
             // basename-collision redirect (pentester-verify residual 1). isControlPath(real) kept as an
             // explicit belt. (A legit target with a symlinked ancestor over-denies here — fail-closed, and
             // checkAncestors already WARNed at enroll time.)
-            guard real == norm, !Broker.isControlPath(real), Broker.isEnrolledTarget(real, registry: registry) else {
+            guard real == norm, !isControlPath(real), Broker.isEnrolledTarget(real, registry: registry) else {
                 throw BrokerError.writeFailed("post-open path escaped: \(real) (norm=\(norm))")
             }
             if ftruncate(fd, 0) != 0 { throw BrokerError.writeFailed("ftruncate: \(String(cString: strerror(errno)))") }
@@ -131,11 +134,11 @@ public final class Broker {
               let sigB64 = reply["signature_b64"] as? String, let sig = Data(base64Encoded: sigB64),
               verifier.verify(challenge: challenge, signature: sig) else {
             try auditAppend(["event": "deny", "op": "approve", "tool": doc.path,
-                             "content_sha256": doc.contentSha256, "caller": caller])
+                             "content_sha256": doc.contentSha256, "caller": caller], path: profile.audit)
             try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "no valid touch"]); return
         }
         try auditAppend(["event": "approve_ok", "op": "approve", "tool": doc.path,
-                         "content_sha256": doc.contentSha256, "caller": caller])
+                         "content_sha256": doc.contentSha256, "caller": caller], path: profile.audit)
         try sendMsg(fd, ["phase": "result", "status": "ok"])
     }
 
@@ -147,8 +150,8 @@ public final class Broker {
         }
         let norm = Broker.normPath(path)    // /private-stripped; same string feeds the checks AND uchgWrite's open
         let reg = loadRegistry()
-        if Broker.isControlPath(norm) || !Broker.isEnrolledTarget(norm, registry: reg) {
-            try auditAppend(["event": "deny_target", "path": norm, "caller": caller])
+        if isControlPath(norm) || !Broker.isEnrolledTarget(norm, registry: reg) {
+            try auditAppend(["event": "deny_target", "path": norm, "caller": caller], path: profile.audit)
             try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "not an enrolled target"]); return
         }
         let nonce = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
@@ -163,16 +166,16 @@ public final class Broker {
         guard reply["phase"] as? String == "signature",
               let sigB64 = reply["signature_b64"] as? String, let sig = Data(base64Encoded: sigB64),
               verifier.verify(challenge: challenge, signature: sig) else {
-            try auditAppend(["event": "deny", "path": norm, "caller": caller])
+            try auditAppend(["event": "deny", "path": norm, "caller": caller], path: profile.audit)
             try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "no valid touch"]); return
         }
         do { try uchgWrite(norm, content, registry: reg) }
         catch {
-            try auditAppend(["event": "write_error", "path": norm, "caller": caller, "err": "\(error)"])
+            try auditAppend(["event": "write_error", "path": norm, "caller": caller, "err": "\(error)"], path: profile.audit)
             try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "write failed"]); return
         }
         try auditAppend(["event": "write_ok", "path": norm, "caller": caller,
-                         "content_sha256": doc.contentSha256])
+                         "content_sha256": doc.contentSha256], path: profile.audit)
         try sendMsg(fd, ["phase": "result", "status": "ok"])
     }
 
@@ -226,9 +229,9 @@ public final class Broker {
         // the whole ceremony INCLUDING the human-touch wait, so a slow client that grabbed it first starved
         // every other write for up to ceremonyDeadline. The only shared state needing serialization is the
         // audit hash-chain RMW, which auditAppend now guards with its own flock. Residual: same-path
-        // concurrent uchgWrite can race, but stays fail-safe — _ccfido ownership (not the uchg flag) is the
-        // write barrier, and the loser gets a spurious write_error with the target left relocked. See
-        // docs/FOLLOWUPS.md.
+        // concurrent uchgWrite can race, but stays fail-safe — service-account ownership (not the uchg
+        // flag) is the write barrier, and the loser gets a spurious write_error with the target left
+        // relocked. See docs/FOLLOWUPS.md.
         do { try handle(conn) } catch { /* malformed/aborted/deadline: drop */ }
     }
 }

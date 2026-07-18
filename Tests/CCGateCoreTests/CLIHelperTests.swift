@@ -4,7 +4,7 @@ import Foundation
 
 final class CLIHelperTests: XCTestCase {
     func testRenderPlist() {
-        let xml = renderPlist(binary: "/opt/cc-fido-gate/cc-fido")
+        let xml = renderPlist(profile: testProfile)
         XCTAssertTrue(xml.contains("<string>_ccfido</string>"))
         XCTAssertTrue(xml.contains("/opt/cc-fido-gate/cc-fido"))
         XCTAssertTrue(xml.contains("<string>daemon</string>"))

@@ -5,7 +5,7 @@ import CCGateCore
 /// leaked negative signer before the positive control so they don't contend for the device. USER-RUN.
 public func fidoNegativeBlinkTest(handle: String, namespace: String, window: Int = 8) -> Bool {
     FileHandle.standardError.write(Data(">>> Do NOT touch the key for a few seconds <<<\n".utf8))
-    let neg = Process(); neg.executableURL = URL(fileURLWithPath: Paths.signKeygen)
+    let neg = Process(); neg.executableURL = URL(fileURLWithPath: fidoSignKeygen)
     neg.arguments = ["-Y", "sign", "-f", handle, "-n", namespace]; neg.environment = scrubbedEnv()
     let inP = Pipe(); neg.standardInput = inP
     neg.standardOutput = FileHandle.nullDevice; neg.standardError = FileHandle.nullDevice
@@ -18,5 +18,5 @@ public func fidoNegativeBlinkTest(handle: String, namespace: String, window: Int
     if signedWithoutTouch { return false }                       // signed with NO touch -> not touch-required
     FileHandle.standardError.write(Data(">>> Now TOUCH the key (positive control) <<<\n".utf8))
     return (try? fidoSign(challenge: Data("positive-control".utf8), handlePath: handle, namespace: namespace,
-                          retries: 1, keygen: Paths.signKeygen)) != nil
+                          retries: 1, keygen: fidoSignKeygen)) != nil
 }
