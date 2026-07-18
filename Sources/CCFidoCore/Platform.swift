@@ -46,7 +46,11 @@ public struct MacOSPlatform: Platform {
         // reassigns the uid out from under anything that may already reference it.
         let existing = run("/usr/bin/dscl", [".", "-read", "/Users/\(name)", "UniqueID"])
         let uid: Int
-        if existing.0 == 0, let n = existing.1.split(separator: " ").last, let existingUID = Int(n) {
+        if existing.0 == 0,
+           let n = existing.1.split(separator: " ").last,
+           let existingUID = Int(n.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            // `dscl -read` output is e.g. "UniqueID: 250\n" — the trailing token carries the
+            // newline, so it must be trimmed before Int(...) (which does not trim implicitly).
             uid = existingUID
         } else {
             // Pick a free uid in the 200-400 service range (mirrors account-setup.sh).

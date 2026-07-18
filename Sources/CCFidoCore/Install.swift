@@ -17,10 +17,18 @@ public func installPrereqs(policySrc: String, home: String, binarySource: String
     for d in [Paths.code, Paths.keydir, Paths.runDir] {
         try fm.createDirectory(atPath: d, withIntermediateDirectories: true)
     }
-    // binary + codesign
-    try? fm.removeItem(atPath: Paths.code + "/cc-fido")
-    try fm.copyItem(atPath: binarySource, toPath: Paths.code + "/cc-fido")
-    if run("/usr/bin/codesign", ["--force", "--options", "runtime", "--sign", "-", Paths.code + "/cc-fido"]).0 != 0 {
+    // binary + codesign. Skip the remove+copy when binarySource already IS the destination (e.g.
+    // a repair re-run invoked as the installed binary) — removing it first would delete the copy
+    // source out from under itself and the copy would then fail.
+    let dest = Paths.code + "/cc-fido"
+    let sameFile = FileManager.default.fileExists(atPath: binarySource)
+        && URL(fileURLWithPath: binarySource).resolvingSymlinksInPath().path
+        == URL(fileURLWithPath: dest).resolvingSymlinksInPath().path
+    if !sameFile {
+        try? fm.removeItem(atPath: dest)
+        try fm.copyItem(atPath: binarySource, toPath: dest)
+    }
+    if run("/usr/bin/codesign", ["--force", "--options", "runtime", "--sign", "-", dest]).0 != 0 {
         throw InstallError.failed("codesign")
     }
     // policy: render (substitute+validate+lint) → validate dict → atomic write. Reuses renderPolicy.
@@ -31,11 +39,15 @@ public func installPrereqs(policySrc: String, home: String, binarySource: String
     let cand = Paths.policy + ".new"
     try rendered.write(to: URL(fileURLWithPath: cand))
     try fm.moveItem(atPath: cand, toPath: Paths.policy)   // atomic
-    // perms
+    // perms (root-owned code + policy — root always exists, so best-effort is fine here)
     _ = run("/usr/sbin/chown", ["-R", "root:wheel", Paths.code]); _ = run("/bin/chmod", ["755", Paths.code])
     _ = run("/bin/chmod", ["644", Paths.policy])
-    _ = run("/usr/sbin/chown", ["_ccfido", Paths.keydir]); _ = run("/usr/sbin/chown", ["_ccfido", Paths.runDir])
-    _ = run("/bin/chmod", ["700", Paths.keydir]); _ = run("/bin/chmod", ["755", Paths.runDir])
-    // account + plist + managed-settings
+    // account + plist + managed-settings — MUST run before the _ccfido chowns below: on a fresh
+    // install the account doesn't exist yet, and chown to a nonexistent user fails.
     try installOrchestration(platform: platform)
+    // _ccfido ownership is the real write barrier (see CLAUDE.md) — fail closed rather than
+    // silently leaving keydir/runDir root-owned.
+    if run("/usr/sbin/chown", ["_ccfido", Paths.keydir]).0 != 0 { throw InstallError.failed("chown _ccfido \(Paths.keydir)") }
+    if run("/usr/sbin/chown", ["_ccfido", Paths.runDir]).0 != 0 { throw InstallError.failed("chown _ccfido \(Paths.runDir)") }
+    _ = run("/bin/chmod", ["700", Paths.keydir]); _ = run("/bin/chmod", ["755", Paths.runDir])
 }
