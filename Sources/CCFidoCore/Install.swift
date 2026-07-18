@@ -58,3 +58,29 @@ public func installPrereqs(policySrc: String, home: String, binarySource: String
     if run("/usr/sbin/chown", ["_ccfido", Paths.runDir]).0 != 0 { throw InstallError.failed("chown _ccfido \(Paths.runDir)") }
     _ = run("/bin/chmod", ["700", Paths.keydir]); _ = run("/bin/chmod", ["755", Paths.runDir])
 }
+
+/// Full teardown. Order matters: bootout daemon → remove managed-settings → UNLOCK every enrolled target
+/// (before deleting the registry/account, else they're stuck immutable) → rm tree/state → delete account.
+/// Every step is best-effort (`try?`/ignored exit) so a partially-installed system still fully tears down.
+/// The root check (this needs privileged ops for real) lives in the CLI dispatch, not here — mirrors
+/// installOrchestration (unit-tested, no guard) vs installPrereqs (root-only, guarded): keeps this the
+/// pure, [SW]-testable half so `swift test` (which never runs as root) can exercise it directly.
+public func uninstall(platform: Platform, enrolledTargets: [String], home: String) throws {
+    try? platform.bootoutDaemon()
+    try? platform.removeManagedSettings()
+    try? FileManager.default.removeItem(atPath: Paths.plist)
+    for t in enrolledTargets {
+        try? platform.clearImmutable(t)                              // nouchg — unconditional, best-effort
+        _ = run("/usr/sbin/chown", ["-R", loginOwner(home: home), t])
+    }
+    for d in [Paths.code, Paths.keydir, Paths.runDir] { try? FileManager.default.removeItem(atPath: d) }
+    try? platform.deleteServiceAccount(name: "_ccfido")
+    // key material (login user's home)
+    for f in ["gate_sk", "gate_sk.pub", "gate_sk1", "gate_sk1.pub", "gate_sk2", "gate_sk2.pub"] {
+        try? FileManager.default.removeItem(atPath: "\(home)/.ccfido/\(f)")
+    }
+}
+func loginOwner(home: String) -> String {
+    let user = (home as NSString).lastPathComponent
+    return "\(user):staff"
+}

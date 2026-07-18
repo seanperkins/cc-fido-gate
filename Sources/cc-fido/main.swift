@@ -3,7 +3,7 @@ import CCFidoCore
 
 let args = Array(CommandLine.arguments.dropFirst())
 func usage() -> Never {
-    FileHandle.standardError.write(Data("usage: cc-fido {daemon|hook|write <path>|enroll [--keys N]|install [--policy PATH]|activate|enroll-file <path> [mode]|enroll-dir <path>|status [--json]|_validate-policy <path>|_render-policy <src> <home>}\n".utf8))
+    FileHandle.standardError.write(Data("usage: cc-fido {daemon|hook|write <path>|enroll [--keys N]|install [--policy PATH]|activate|uninstall|enroll-file <path> [mode]|enroll-dir <path>|status [--json]|_validate-policy <path>|_render-policy <src> <home>}\n".utf8))
     exit(2)
 }
 
@@ -69,6 +69,20 @@ case "activate":
         print("cc-fido: daemon activated — socket \(running ? "reachable" : "NOT reachable (re-run activate)")")
         exit(running ? 0 : 1)
     } catch { FileHandle.standardError.write(Data("cc-fido activate failed: \(error)\n".utf8)); exit(1) }
+case "uninstall":
+    guard getuid() == 0 else {
+        FileHandle.standardError.write(Data("cc-fido uninstall: must run as root — use: sudo cc-fido uninstall\n".utf8)); exit(1)
+    }
+    // reads custody.json (both file AND dir targets) while it still exists — Broker.loadRegistry()
+    // returns files only and is module-internal, so use the public CustodyRegistry accessor instead.
+    let registry = CustodyRegistry.load()
+    let targets = registry.files + registry.dirs
+    let uninstallHome = realLoginHome()
+    do {
+        try uninstall(platform: MacOSPlatform(), enrolledTargets: targets, home: uninstallHome)
+        let r = gatherStatus(platform: MacOSPlatform())
+        print("cc-fido: uninstalled — status now \(r.rollup)"); exit(0)
+    } catch { FileHandle.standardError.write(Data("cc-fido uninstall failed: \(error)\n".utf8)); exit(1) }
 case "enroll":
     if getuid() == 0 { FileHandle.standardError.write(Data("cc-fido enroll: run as your login user (not sudo) — it needs your key + a touch\n".utf8)); exit(1) }
     let keys = flagValue("--keys", in: args).flatMap { Int($0) } ?? 1
