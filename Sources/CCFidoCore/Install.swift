@@ -46,6 +46,11 @@ public func installPrereqs(policySrc: String, home: String, binarySource: String
     let cand = Paths.policy + ".new"
     try rendered.write(to: URL(fileURLWithPath: cand))
     try fm.moveItem(atPath: cand, toPath: Paths.policy)   // atomic
+    // Ship the (unsubstituted) template next to the binary so re-installs have a default source.
+    if FileManager.default.fileExists(atPath: policySrc) {
+        try? FileManager.default.removeItem(atPath: Paths.code + "/policy.json.template")
+        try? FileManager.default.copyItem(atPath: policySrc, toPath: Paths.code + "/policy.json.template")
+    }
     // perms (root-owned code + policy — root always exists, so best-effort is fine here)
     _ = run("/usr/sbin/chown", ["-R", "root:wheel", Paths.code]); _ = run("/bin/chmod", ["755", Paths.code])
     _ = run("/bin/chmod", ["644", Paths.policy])

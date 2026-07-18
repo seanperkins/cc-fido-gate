@@ -43,6 +43,12 @@ NotebookEdit (M3), plus the per-task review fixes already committed. The below s
 - **Task4 — `custody.json` read-modify-write is not locked.** Concurrent `enroll-*` could drop an
   entry (last-writer-wins on the whole file). Low risk: enrollment is serial admin. Fix: flock the
   registry file across the RMW.
+- **Task6 review — directory-enrolled targets: uninstall vs. broker write-authorization scope
+  mismatch.** `uninstall` unlocks registered dir paths (`registry.dirs`) via `clearImmutable`, but
+  the broker's write-authorization (`Broker.loadRegistry()`) is files-only, exact-path match.
+  Whether files written *inside* a registered dir end up individually `uchg`-locked in a way
+  `clearImmutable(dirPath)` wouldn't reach is a pre-existing broker-architecture question, not
+  addressed by the guided-install work.
 
 ## Operational (hardware-verified 2026-07-17)
 - **launchd broker needs a `kickstart` if a stale socket is present.** After prior *manual* daemon runs
@@ -86,3 +92,6 @@ NotebookEdit (M3), plus the per-task review fixes already committed. The below s
 - **task6_hook.sh set -e fragility (Minor, latent).** Under `set -eu -o pipefail`, a non-zero
   `claude -p` would abort before the `[ -f "$D/.env" ] && … || echo note` reporting line. In practice
   `claude -p` returns 0 even on a hook denial, so latent; it's a USER-RUN test harness.
+- **Task7 — `task7_install.sh`/`task7_enroll.sh`/`task7_teardown.sh` retired**, replaced by the
+  `cc-fido install`/`enroll`/`activate`/`uninstall` subcommands (and the `/cc-fido:install` guided
+  skill). `task7_accept.sh` is retained as the deep USER-RUN acceptance test.
