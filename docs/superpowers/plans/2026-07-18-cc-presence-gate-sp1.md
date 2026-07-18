@@ -14,7 +14,7 @@
 
 - **Swift tools 5.9, macOS 13+** — do not change `Package.swift` platform/tools floor.
 - **No runtime behavior change** to the FIDO gate. Every task ends with `swift build && swift test` green; expected *values* in existing tests do not change — only call-site signatures and import/target splits.
-- **Grep gate (done-criterion):** after Task 9, `Sources/CCGateCore/` must contain **zero** matches for any of: `_ccfido` · `.ccfido` · `gate_sk` · `gate-principal` · `cc-fido` · `ccfido` · `/var/ccfido` · `cc-fido-gate@` · `com.cc-fido-gate` · `brokerd` (comments and error strings included).
+- **Grep gate (done-criterion):** after Task 9, `Sources/CCGateCore/` must contain **zero** matches for any of: `_ccfido` · `.ccfido` · `gate_sk` · `gate-principal` · `cc-fido` · `ccfido` · `/var/ccfido` · `cc-fido-gate@` · `com.cc-fido-gate` · `brokerd` (comments and error strings included). **Exception, by explicit user decision:** `Enroll.swift` is excluded from the sweep — its FIDO enroll-ceremony literals (`.ccfido`, `gate_sk`, `gate-principal`) are a documented SP2 residual; de-FIDO-ing `runEnroll` is deferred past SP1.
 - **`normPath`'s firmlink set `["/var", "/etc", "/tmp"]` is a fixed platform constant** — never profile-derive it (`Broker.swift:19-28`).
 - **`scrubEnv`/`scrubbedEnv` stays in `CCGateCore`** as the single env-allowlist for every child spawn — never stranded into a backend.
 - **Fail-closed everywhere** — unreadable payload, missing policy, bad regex, `getpwnam` failure, unknown tool → deny. Preserve on every edited decision path.
@@ -690,6 +690,8 @@ final class CancellationSeamTests: XCTestCase {
 ```
 
 - [ ] **Step 3: Grep gate**
+
+> **As shipped:** the enumeration excludes `Enroll.swift` (`.filter { $0.lastPathComponent != "Enroll.swift" }`), per the Global Constraints exception above — see that file's own FIDO enroll-ceremony literals, deferred to SP2. The code block below is the original plan text; it predates that carve-out.
 
 ```swift
 import XCTest
