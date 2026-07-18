@@ -47,9 +47,17 @@ public func installPrereqs(policySrc: String, home: String, binarySource: String
     try rendered.write(to: URL(fileURLWithPath: cand))
     try fm.moveItem(atPath: cand, toPath: Paths.policy)   // atomic
     // Ship the (unsubstituted) template next to the binary so re-installs have a default source.
-    if FileManager.default.fileExists(atPath: policySrc) {
-        try? FileManager.default.removeItem(atPath: Paths.code + "/policy.json.template")
-        try? FileManager.default.copyItem(atPath: policySrc, toPath: Paths.code + "/policy.json.template")
+    // Skip the remove+copy when policySrc already IS the staging destination (a --policy-less
+    // re-install defaults policySrc to this same path via installRepoPolicyDefault()) — same
+    // same-file guard as the binary-copy block above, for the same reason: removing first would
+    // delete the only copy out from under the subsequent copy.
+    let templateDest = Paths.code + "/policy.json.template"
+    let templateSameFile = fm.fileExists(atPath: policySrc)
+        && URL(fileURLWithPath: policySrc).resolvingSymlinksInPath().path
+        == URL(fileURLWithPath: templateDest).resolvingSymlinksInPath().path
+    if fm.fileExists(atPath: policySrc) && !templateSameFile {
+        try? fm.removeItem(atPath: templateDest)
+        try? fm.copyItem(atPath: policySrc, toPath: templateDest)
     }
     // perms (root-owned code + policy — root always exists, so best-effort is fine here)
     _ = run("/usr/sbin/chown", ["-R", "root:wheel", Paths.code]); _ = run("/bin/chmod", ["755", Paths.code])
