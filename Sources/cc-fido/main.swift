@@ -3,7 +3,7 @@ import CCFidoCore
 
 let args = Array(CommandLine.arguments.dropFirst())
 func usage() -> Never {
-    FileHandle.standardError.write(Data("usage: cc-fido {daemon|hook|write <path>|enroll|install [--policy PATH]|enroll-file <path> [mode]|enroll-dir <path>|status [--json]|_validate-policy <path>|_render-policy <src> <home>}\n".utf8))
+    FileHandle.standardError.write(Data("usage: cc-fido {daemon|hook|write <path>|enroll [--keys N]|install [--policy PATH]|enroll-file <path> [mode]|enroll-dir <path>|status [--json]|_validate-policy <path>|_render-policy <src> <home>}\n".utf8))
     exit(2)
 }
 
@@ -57,6 +57,11 @@ case "install":
         print("cc-fido: prereqs installed. Next: cc-fido enroll  (then: sudo cc-fido activate)")
         exit(0)
     } catch { FileHandle.standardError.write(Data("cc-fido install failed: \(error)\n".utf8)); exit(1) }
+case "enroll":
+    if getuid() == 0 { FileHandle.standardError.write(Data("cc-fido enroll: run as your login user (not sudo) — it needs your key + a touch\n".utf8)); exit(1) }
+    let keys = args.firstIndex(of: "--keys").flatMap { Int(args[$0 + 1]) } ?? 1
+    do { try runEnroll(home: NSHomeDirectory(), keys: keys); print("cc-fido: enrolled. Next: sudo cc-fido activate"); exit(0) }
+    catch { FileHandle.standardError.write(Data("cc-fido enroll failed: \(error)\n".utf8)); exit(1) }
 case "_render-plist": print(renderPlist()); exit(0)
 case "_render-managed": print(renderManagedSettings(hookCmd: Paths.code + "/cc-fido hook")); exit(0)
 case "_cc-version":   // record the Claude Code version for the install-time re-probe
