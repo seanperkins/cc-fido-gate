@@ -4,8 +4,8 @@ public enum InstallError: Error { case notRoot, failed(String) }
 
 /// Boots the LaunchDaemon (fresh socket). Refuses if no key is enrolled (the daemon would deny everything).
 /// `keyEnrolled` is injected so it's unit-testable; the subcommand passes the real allowed_signers check.
-public func activate(platform: Platform, keyEnrolled: Bool) throws {
-    guard keyEnrolled else { throw InstallError.failed("no key enrolled — run `cc-fido enroll` first") }
+public func activate(platform: Platform, keyEnrolled: Bool, profile: GateProfile) throws {
+    guard keyEnrolled else { throw InstallError.failed("no key enrolled — run `\(profile.binaryName) enroll` first") }
     try platform.activateDaemon()
 }
 

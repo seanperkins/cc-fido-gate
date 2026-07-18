@@ -16,9 +16,9 @@ final class InstallTests: XCTestCase {
     func testActivateRefusesWithoutKey_thenActivates() throws {
         // activate must refuse if allowed_signers is absent; with a key present, it calls activateDaemon.
         let p = MockPlatform()
-        XCTAssertThrowsError(try activate(platform: p, keyEnrolled: false))
+        XCTAssertThrowsError(try activate(platform: p, keyEnrolled: false, profile: testProfile))
         XCTAssertFalse(p.calls.contains("activateDaemon"))
-        try activate(platform: p, keyEnrolled: true)
+        try activate(platform: p, keyEnrolled: true, profile: testProfile)
         XCTAssertTrue(p.calls.contains("activateDaemon"))
     }
 

@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 /// OS-specific install-time privileged primitives. macOS impl below; a LinuxPlatform is a future spec.
-/// The mutating methods assume the process is root (install/activate/uninstall run via `sudo cc-fido …`).
+/// The mutating methods assume the process is root (install/activate/uninstall run via `sudo` with the gate binary).
 public protocol Platform {
     func serviceAccountExists(name: String) -> Bool
     func createServiceAccount(name: String) throws       // dscl  (Linux: useradd)

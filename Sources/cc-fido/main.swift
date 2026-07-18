@@ -71,7 +71,7 @@ case "activate":
     let enrolled = (try? String(contentsOfFile: activateCtx.profile.allowedSigners, encoding: .utf8))?.isEmpty == false
     do {
         let platform = MacOSPlatform(profile: activateCtx.profile)
-        try activate(platform: platform, keyEnrolled: enrolled)
+        try activate(platform: platform, keyEnrolled: enrolled, profile: activateCtx.profile)
         usleep(1_000_000)
         let running = platform.daemonState().running
         print("cc-fido: daemon activated — socket \(running ? "reachable" : "NOT reachable (re-run activate)")")
