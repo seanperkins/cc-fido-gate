@@ -42,7 +42,11 @@ fi
 # Login user's real home (mirrors Sources/cc-touch-id/main.swift's realLoginHome()) — used for the
 # policy __HOME__ substitution below. Never use root's $HOME for this.
 LOGIN_HOME="$(dscl . -read /Users/"$SUDO_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
-[ -z "$LOGIN_HOME" ] && LOGIN_HOME="$HOME"
+if [ -z "$LOGIN_HOME" ] || [ "$LOGIN_HOME" = "/var/root" ] || [ ! -d "$LOGIN_HOME" ]; then
+  echo "FAIL: could not resolve a valid login home for '$SUDO_USER' via dscl (got '${LOGIN_HOME:-<empty>}')." >&2
+  echo "      Refusing to fall back to root's \$HOME — that would bake the wrong __HOME__ into the policy." >&2
+  exit 1
+fi
 
 BIN="$REPO_ROOT/.build/release/cc-touch-id"
 if [ ! -x "$BIN" ]; then
