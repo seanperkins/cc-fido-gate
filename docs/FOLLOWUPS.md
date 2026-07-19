@@ -177,3 +177,17 @@ not yet exercised on hardware; drive it via the `/cc-fido:install` skill.
   never validate under cc-touch-id's verifier and vice-versa). To wire it: have `Broker` pass
   `ns: profile.namespace` (`"cc-touch-id-gate/v1"` / a cc-fido equivalent). NOTE: this changes the
   daemon's challenge bytes, so it needs a rebuild + reinstall + on-hardware re-validation of the gate.
+- **`status.keyEnrolled` may under-report when run from the plain binary (Minor, final review).**
+  `gatherStatus` sets `keyEnrolled = enroller.isEnrolled(home:)` → `seKeyExists(tag:)`, a keychain query.
+  The SE key lives in access group `HH3SJBAS42.com.seanperkins.cc-touch-id`, which only the entitled
+  `.app` binary belongs to. The install SKILL runs `status` from the plain `.build/release/cc-touch-id`,
+  which isn't in that group and may not see the key → the rollup can show `prereqs-only` after a real
+  enroll. Conservative (never OVER-reports enrollment), not security-relevant; misleads the guided flow.
+  Fix: probe enrollment for status via the app binary, or (as root) via a non-empty `allowed_signers`
+  check, rather than a keychain query from the plain binary.
+- **denyNudge points at `cc-touch-id write`, which can't sign from the plain binary (Minor).**
+  `denyNudgeMsg` (`HookLogic.swift`) emits ``Use `cc-touch-id write <path>` `` via `profile.binaryName`.
+  For Touch ID, `write`→`seSign` needs the entitled `.app` binary; bare `cc-touch-id` on PATH (if any)
+  would amfid-kill. Only reachable when a user populates `locked_paths` (shipped `policy.json` has it
+  empty) and fails closed. Same family as the plain-binary-hook residual. Fix: nudge the app-binary path
+  for the Touch ID profile.

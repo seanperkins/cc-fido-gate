@@ -98,7 +98,7 @@ fi
 # Prereqs are now installed. Break the install<->enroll circularity: if no key is enrolled yet, STOP
 # here with instructions (exit 0, not a hard refusal) — enroll needs the account+dirs we just created;
 # the daemon is only activated on a re-run once a key exists.
-if ! sudo test -s "$KEY_DIR/enrolled_pubkey" 2>/dev/null; then
+if ! sudo test -s "$KEY_DIR/allowed_signers" 2>/dev/null; then
   echo "Prereqs installed. Next: run  cc-touch-id enroll  (needs a Touch ID prompt), then re-run this script to activate the daemon."
   exit 0
 fi
@@ -113,12 +113,12 @@ echo "=== CANARY: the BROKER must deny an execute-write to a control path (NON-d
 # Drives the broker as the agent uid via the plain daemon binary; the daemon denies control paths
 # BEFORE any dialog/Touch ID prompt, so the plain (non-SE-entitled) binary is sufficient here.
 # Capture separately so pipefail can't misread cc-touch-id's (correct) non-zero deny exit as a failure.
-CANARY_OUT=$(printf 'x' | "$CODE_DIR/cc-touch-id" write "$KEY_DIR/enrolled_pubkey" 2>&1 || true)
+CANARY_OUT=$(printf 'x' | "$CODE_DIR/cc-touch-id" write "$KEY_DIR/allowed_signers" 2>&1 || true)
 echo "$CANARY_OUT" | grep -qi 'deny\|not an enrolled' \
   && echo "PASS: broker denied control-path write" \
   || { echo "FAIL: broker did not deny control path — ABORTING"; echo "$CANARY_OUT"; exit 1; }
-sudo test -s "$KEY_DIR/enrolled_pubkey" \
-  && echo "PASS: enrolled_pubkey intact" \
+sudo test -s "$KEY_DIR/allowed_signers" \
+  && echo "PASS: allowed_signers intact" \
   || { echo "FAIL: trust store damaged — ABORTING"; exit 1; }
 
 echo "=== install complete ==="
