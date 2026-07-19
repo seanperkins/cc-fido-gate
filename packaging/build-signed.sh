@@ -57,13 +57,16 @@ fi
 echo "built: $APP"
 
 # --- c. sanity-verify the author-machine build (this is the check the earlier script lacked) ------
+# NOTE: capture codesign output into a var THEN grep it — a `codesign ... | grep -q` pipeline under
+# `set -o pipefail` false-fails, because `grep -q` closes the pipe on first match and codesign then
+# dies with SIGPIPE, which pipefail reports as a failed pipeline.
 echo "--- Step c: sanity-verify (signed + profile-embedded + entitled + LAUNCHES) ---"
-codesign -dvvv "$APP" 2>&1 | grep -q "Authority=" \
-  || { echo "FAIL: app is not code-signed" >&2; exit 1; }
+SIG_OUT="$(codesign -dvvv "$APP" 2>&1 || true)"
+case "$SIG_OUT" in *Authority=*) : ;; *) echo "FAIL: app is not code-signed" >&2; exit 1 ;; esac
 [ -f "$APP/Contents/embedded.provisionprofile" ] \
   || { echo "FAIL: no embedded provisioning profile — the SE keychain-access-group would be unauthorized -> amfid kill" >&2; exit 1; }
-codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "keychain-access-groups" \
-  || { echo "FAIL: keychain-access-groups entitlement missing from the build" >&2; exit 1; }
+ENT_OUT="$(codesign -d --entitlements - "$APP" 2>/dev/null || true)"
+case "$ENT_OUT" in *keychain-access-groups*) : ;; *) echo "FAIL: keychain-access-groups entitlement missing from the build" >&2; exit 1 ;; esac
 # The decisive check: does the entitled binary survive AMFI at launch? (status = no touch, read-only)
 if ! "$APP/Contents/MacOS/cc-touch-id" status --json >/dev/null 2>&1; then
   echo "FAIL: the built app is amfid-killed at launch (rc $?). The provisioning/entitlement combo is wrong;" >&2
