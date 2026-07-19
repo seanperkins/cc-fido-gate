@@ -23,10 +23,17 @@ public struct TouchIdEnroller: Enroller {
         }
     }
     public func positiveControl(home: String, profile: GateProfile) -> Bool {
+        // Verify against the SE key's OWN exported public key, NOT the on-disk registered file:
+        // `enroll` has just chowned `allowedSigners` to the service account (mode 600), and this
+        // self-test runs as the LOGIN user, which therefore cannot read it (EACCES). The registered
+        // file IS `hexEncode(seExportPublicKey(tag))` — the same bytes — so verifying against the live
+        // export is equivalent and avoids the permission cross. (The daemon, running AS the service
+        // account, reads the file fine at runtime.)
+        guard let pub = try? seExportPublicKey(tag: touchIdKeyTag) else { return false }
         let nonce = randomBytes(32)
         FileHandle.standardError.write(Data(">>> TOUCH to confirm enrollment <<<\n".utf8))
         guard let sig = try? seSign(message: nonce, tag: touchIdKeyTag, reason: "confirm cc-touch-id enrollment") else { return false }
-        return TouchIdVerifier(allowedSigners: profile.allowedSigners).verify(challenge: nonce, signature: sig)
+        return seVerify(message: nonce, signatureDER: sig, publicKeyX963: pub)
     }
     public func isEnrolled(home: String) -> Bool { seKeyExists(tag: touchIdKeyTag) }
     public func removeKeyMaterial(home: String) { _ = seDeleteKey(tag: touchIdKeyTag) }
