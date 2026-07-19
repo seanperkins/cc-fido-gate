@@ -5,7 +5,8 @@ final class GrepGateTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/CCGateCore")
         let tokens = ["_ccfido", ".ccfido", "gate_sk", "gate-principal", "cc-fido",
-                      "ccfido", "/var/ccfido", "cc-fido-gate@", "com.cc-fido-gate", "brokerd"]
+                      "ccfido", "/var/ccfido", "cc-fido-gate@", "com.cc-fido-gate", "brokerd",
+                      "cc-touch-id", "cctouchid", "com.cc-touch-id", "mobilitylabs"]
         let fm = FileManager.default
         let files = fm.enumerator(at: root, includingPropertiesForKeys: nil)!
             .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
