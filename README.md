@@ -1,11 +1,12 @@
-# cc-fido-gate
+# cc-presence-gate
 
-**Require a physical FIDO/security-key touch before Claude Code runs a high-risk tool call.**
+**Require a physical presence check — a FIDO security key *or* Touch ID — before Claude Code runs a high-risk tool call.**
 
-`cc-fido-gate` is a Claude Code plugin that binds a hardware security key to an agent's
-most dangerous actions. When a gated tool call fires — a force-push, an `rm -rf`, a prod
-deploy, a write to `.env` — a `PreToolUse` hook renders the exact command and demands a
-signature from an enrolled hardware key before it will allow the call to proceed.
+`cc-presence-gate` ships two Claude Code plugins — **`cc-fido`** (a FIDO/security-key touch) and
+**`cc-touch-id`** (a Touch ID / Secure Enclave biometric) — that bind a physical presence gesture to
+an agent's most dangerous actions. When a gated tool call fires — a force-push, an `rm -rf`, a prod
+deploy, a write to `.env` — a `PreToolUse` hook renders the exact command and demands a hardware
+signature before it will allow the call to proceed.
 
 The agent can *trigger* the prompt as often as it likes. It cannot satisfy it: producing
 the signature requires touching the key (and optionally entering a PIN), and an agent has
@@ -43,9 +44,11 @@ questions (Task 0) that must resolve favorably before this is buildable at all.
 
 ## Status
 
-🚧 Design revised after **two** five-model review rounds (both unanimous REVISE — every finding
-folded in; the concept was affirmed by the whole panel). Buildability is gated on a **Task 0
-feasibility spike** (chiefly: does Claude Code deny a tool whose hook is killed/times-out?). See
+**Built and working.** Both gates are implemented on a shared privileged-broker core (`CCGateCore`):
+`cc-fido` (FIDO security key) and `cc-touch-id` (Touch ID / Secure Enclave). The Touch ID gate is
+Developer-ID-signed, notarized, and published — a from-scratch install → enroll → real gated write has
+been verified end-to-end on hardware. Known non-blocking residuals are tracked in
+[docs/FOLLOWUPS.md](docs/FOLLOWUPS.md); the full threat model and design rationale are in
 [docs/design.md](docs/design.md).
 
 ## Requirements
@@ -70,11 +73,47 @@ An alternative gate that swaps the hardware security key for your Mac's built-in
 (Secure Enclave key, no external key required). Same hook/broker architecture as `cc-fido`, same
 custody guarantees — the presence ceremony is a Touch ID sheet instead of a key blink.
 
-Guided install: run the `/cc-touch-id:install` skill. Unlike `cc-fido`, it has a real prerequisite:
-Secure Enclave key access needs a **provisioned, Developer-ID-signed and notarized `.app` bundle**,
-not just a signed CLI binary — `packaging/build-signed.sh` builds it, but that step needs a Developer
-ID Application certificate for team `HH3SJBAS42` and a stored `notarytool` credential; the skill's
-Step 0 preflights for both and offers a machine-local dev-signed fallback if they're absent.
+**Guided (recommended):** run the `/cc-touch-id:install` skill — it detects whether you have an Apple
+Developer ID and picks the right path below, then walks each step.
+
+Touch ID's hook/enroll/write roles use a Secure Enclave key, which macOS only permits from a
+**provisioned, Developer-ID-signed, notarized `.app` bundle** (a bare CLI binary is killed by amfid).
+You obtain that `.app` one of two ways. Both start the same — clone the repo and build the (unentitled,
+anyone-can-build) daemon binary:
+
+```
+git clone https://github.com/seanperkins/cc-presence-gate.git && cd cc-presence-gate
+swift build -c release
+```
+
+**Path A — download the prebuilt notarized build (no Apple account needed).**
+`fetch-app.sh` downloads the published `.app` and verifies it against a pinned SHA-256 + Developer-ID
+signature + team `HH3SJBAS42` + no `get-task-allow` before use:
+
+```
+APP="$(bash install/fetch-app.sh)"
+sudo APP="$APP" bash install/install.sh
+/opt/cc-touch-id-gate/cc-touch-id.app/Contents/MacOS/cc-touch-id enroll     # real terminal, touch
+sudo /opt/cc-touch-id-gate/cc-touch-id activate
+```
+
+**Path B — build + sign it yourself (highest trust: you compiled it).**
+Needs a Developer ID Application certificate and a stored `notarytool` credential (a non-`HH3SJBAS42`
+team also retargets `DEVELOPMENT_TEAM`/bundle id in `packaging/` and passes `EXPECTED_TEAM=<team>`):
+
+```
+bash packaging/build-distribution.sh
+sudo APP="$PWD/packaging/.dd/export/cc-touch-id.app" bash install/install.sh
+# then enroll + activate exactly as in Path A
+```
+
+Check state with `cc-touch-id status`. Remove everything with `sudo /opt/cc-touch-id-gate/cc-touch-id
+uninstall` (delete the Secure Enclave key first via the entitled app's `… _delete-key`). Run the
+sudo/touch steps in a **real terminal** so `sudo` can prompt and the Touch ID sheet can appear.
+
+> **macOS 26 note:** current `stapler`/`spctl` regressions ship the build notarized but *un-stapled* —
+> it passes Gatekeeper via the online check, so first launch needs network. See
+> [docs/FOLLOWUPS.md](docs/FOLLOWUPS.md).
 
 **cc-fido and cc-touch-id do not coexist yet.** Both write the same managed-settings hook file;
 installing one replaces the other's gate. Pick one per machine until a future coexistence pass
