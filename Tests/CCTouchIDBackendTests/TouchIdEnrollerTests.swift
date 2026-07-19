@@ -16,10 +16,14 @@ final class TouchIdEnrollerTests: XCTestCase {
     }
     func testRegisterAppendsHexPubkeyNoPrincipal() {
         var captured: [[String]] = []
-        TouchIdEnroller(priv: { captured.append($0); return true }).register(pubHex: "0401ab", profile: profile())
+        let ok = TouchIdEnroller(priv: { captured.append($0); return true }).register(pubHex: "0401ab", profile: profile())
+        XCTAssertTrue(ok)
         let joined = captured.last!.joined(separator: " ")
         XCTAssertTrue(joined.contains("/var/cctouchid/allowed_signers"))
         XCTAssertTrue(joined.contains("0401ab"))
         XCTAssertFalse(joined.contains("gate-principal"))
+        // must be a single-`>` overwrite redirect, not `>>` append
+        XCTAssertTrue(joined.contains("> /var/cctouchid/allowed_signers"))
+        XCTAssertFalse(joined.contains(">> /var/cctouchid/allowed_signers"))
     }
 }
