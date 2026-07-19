@@ -38,20 +38,23 @@ ditto -x -k "$ZIP" "$WORK/x"
 APP="$(/usr/bin/find "$WORK/x" -maxdepth 2 -type d -name 'cc-touch-id.app' | head -1)"
 [ -n "$APP" ] && [ -d "$APP" ] || { echo "fetch-app: no cc-touch-id.app inside the asset" >&2; exit 1; }
 
-# capture-then-case (avoids the pipefail/SIGPIPE false-fail with grep -q; see build-signed.sh)
-SPCTL="$(spctl -a -vvv -t exec "$APP" 2>&1 || true)"
-case "$SPCTL" in *accepted*) : ;; *) echo "fetch-app: spctl rejected — not notarized" >&2; exit 1 ;; esac
+# HARD gates — deterministic on every macOS. The SHA-256 pin above already bound the exact published
+# bytes; these confirm the signature is valid, from the pinned team, and distribution-shaped.
+codesign --verify --strict "$APP" 2>/dev/null || { echo "fetch-app: codesign --verify failed (broken/tampered signature)" >&2; exit 1; }
 GOTTEAM="$(codesign -dvvv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
 [ "$GOTTEAM" = "$TEAM" ] || { echo "fetch-app: team mismatch (got '$GOTTEAM', pinned '$TEAM')" >&2; exit 1; }
 ENT="$(codesign -d --entitlements :- "$APP" 2>/dev/null || true)"
 case "$ENT" in *get-task-allow*) echo "fetch-app: get-task-allow present — refusing" >&2; exit 1 ;; esac
-# stapler ships with Xcode, not always the CLT; spctl already proved notarization, so this is a
-# bonus "is the ticket stapled (offline-valid)" check — skip cleanly if the tool is absent.
+# BEST-EFFORT — Gatekeeper convenience tools (spctl/stapler); may error on some macOS builds (26).
+# The sha256 pin + valid Developer ID signature + team already bind this to the exact notarized
+# artifact the maintainer published, so a tool glitch here does not weaken the trust chain.
+SPCTL="$(spctl -a -vvv -t exec "$APP" 2>&1 || true)"
+case "$SPCTL" in *accepted*) echo "fetch-app: spctl accepted (notarized, online-verified)" >&2 ;;
+  *) echo "fetch-app: (spctl unavailable/errored on this OS — relying on sha256 pin + Developer ID signature)" >&2 ;; esac
 if xcrun --find stapler >/dev/null 2>&1; then
-  case "$(xcrun stapler validate "$APP" 2>&1 || true)" in *worked*) : ;; *) echo "fetch-app: stapler validate failed" >&2; exit 1 ;; esac
-else
-  echo "fetch-app: (stapler unavailable — relying on spctl for notarization; install Xcode for the stapled-ticket check)" >&2
+  case "$(xcrun stapler validate "$APP" 2>&1 || true)" in *worked*) echo "fetch-app: stapler ticket valid (offline-capable)" >&2 ;;
+    *) echo "fetch-app: (not stapled — Gatekeeper verifies online at first launch)" >&2 ;; esac
 fi
 
-echo "fetch-app: verified (sha256 pin + notarized + team $TEAM + no get-task-allow + stapled)" >&2
+echo "fetch-app: verified (sha256 pin + valid Developer ID sig + team $TEAM + no get-task-allow)" >&2
 echo "$APP"   # stdout: the path to hand install.sh as APP=

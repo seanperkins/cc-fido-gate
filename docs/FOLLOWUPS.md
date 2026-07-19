@@ -167,6 +167,19 @@ not yet exercised on hardware; drive it via the `/cc-fido:install` skill.
   fallback; `CCTouchID.distribution.entitlements` remains for a direct-`codesign` path. Residual: an
   on-hardware `enroll` + a gated write under the freshly *installed* notarized app is the final
   end-to-end acceptance (the SE persist + biometric-sign primitives are already proven).
+- **macOS 26: `stapler` and `spctl` are broken; distribution ships notarized-but-UN-stapled (accepted
+  residual).** On the macOS 26 build machine, `xcrun stapler staple` fails with Error 73 ("could not
+  remove existing ticket from …/Contents/CodeResources — No such file or directory") even though the
+  notarization ticket downloads fine from Apple's CloudKit, and `spctl -a -t exec` returns "invalid API
+  object reference". Both are local Gatekeeper-tooling regressions, not artifact problems —
+  notarization is authoritative and confirmed via `notarytool` (Accepted), and `codesign --verify
+  --strict` passes. Consequence: `build-distribution.sh` now treats stapling as **best-effort** (warns,
+  continues) and the verify/`fetch-app.sh`/`publish-release.sh`/`touchid_notarize_accept.sh` paths gate
+  on the **deterministic** checks (SHA-256 pin + `codesign --verify` + team + no `get-task-allow`) with
+  `spctl`/`stapler` demoted to informational. A notarized-but-unstapled app passes Gatekeeper via the
+  ONLINE check (needs network at first launch); it just lacks offline validation. To restore offline
+  stapling: staple on a non-macOS-26 machine, or wrap the `.app` in a signed+notarized **DMG** and
+  staple the DMG (different code path, likely dodges the bug).
 - **`ns` domain-separator is defined but NOT wired into the broker's challenge (defense-in-depth,
   deferred).** SP2 added an optional `ns` field to `SignedDocument` (`Sources/CCGateCore/Canonical.swift`)
   so a Secure-Enclave signature — raw P-256 over `canonicalBytes`, with no external namespace like
