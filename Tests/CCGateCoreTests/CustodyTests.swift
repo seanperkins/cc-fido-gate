@@ -33,4 +33,20 @@ final class CustodyTests: XCTestCase {
         try CustodyRegistry.add(file: "/var/foo", dir: nil, path: p)          // exact repeat
         XCTAssertEqual(CustodyRegistry.load(path: p).files, ["/var/foo"])     // one entry, normalized
     }
+    func testRegistryConcurrentAddsPreservesAllEntries() throws {
+        // Verifies the flock-serialized RMW: concurrent adds must not race and drop entries.
+        let path = NSTemporaryDirectory() + "custody-concurrent-\(UUID().uuidString).json"
+        let count = 20
+        let group = DispatchGroup()
+        for i in 0..<count {
+            group.enter()
+            DispatchQueue.global().async {
+                try? CustodyRegistry.add(file: "/tmp/concurrent-file-\(i)", dir: nil, path: path)
+                group.leave()
+            }
+        }
+        group.wait()
+        let (files, _) = CustodyRegistry.load(path: path)
+        XCTAssertEqual(files.count, count, "expected \(count) entries but got \(files.count): \(files)")
+    }
 }

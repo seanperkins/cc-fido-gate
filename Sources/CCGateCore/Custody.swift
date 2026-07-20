@@ -33,6 +33,13 @@ public enum CustodyRegistry {
         return (o["files"] as? [String] ?? [], o["dirs"] as? [String] ?? [])
     }
     public static func add(file: String?, dir: String?, path: String) throws {
+        // Advisory flock(LOCK_EX) serializes concurrent enroll-* processes across the
+        // read–modify–write so two racing adds cannot drop each other's entry (last-writer-wins).
+        // If open fails the flock is skipped (best-effort: the subsequent write will also fail and
+        // propagate the real error to the caller).
+        let fd = open(path, O_RDWR | O_CREAT, 0o600)
+        if fd >= 0 { flock(fd, LOCK_EX) }
+        defer { if fd >= 0 { flock(fd, LOCK_UN); close(fd) } }
         var (files, dirs) = load(path: path)
         // Normalize via Broker.normPath (the SAME normalization the broker uses at comparison time) so
         // /private/var/foo and /var/foo dedup to one entry — idempotency contract (Task-4 review). NOT
