@@ -8,6 +8,22 @@ struct StubVerifier: Verifier {
 }
 
 final class BrokerLogicTests: XCTestCase {
+    // --- M1: a durable write must never be reported as a failure ---
+    enum FakeAuditError: Error { case disk }
+    func testWriteResultIsOkWhenAuditSucceeded() {
+        let r = Broker.writeResult(auditError: nil)
+        XCTAssertEqual(r["status"] as? String, "ok")
+        XCTAssertNil(r["audit_error"], "no audit failure ⇒ no audit_error key")
+    }
+    func testWriteResultStaysOkButFlagsAuditFailure() {
+        // The write is already durable at this point: an audit-append failure must NOT downgrade the
+        // status to deny (the client would think nothing happened) — but it must not be silent either.
+        let r = Broker.writeResult(auditError: FakeAuditError.disk)
+        XCTAssertEqual(r["status"] as? String, "ok", "durable write must still report ok")
+        XCTAssertTrue((r["audit_error"] as? String)?.contains("audit append failed") == true,
+                      "audit gap must be surfaced, got: \(String(describing: r["audit_error"]))")
+    }
+
     func testDecideApproveCompilesAndBindsInput() throws {
         let b = Broker(profile: testProfile, verifier: StubVerifier())
         let d = try b.decideApprove(["op": "approve", "tool": "Bash",

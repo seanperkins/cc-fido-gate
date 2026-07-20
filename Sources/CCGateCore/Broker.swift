@@ -105,6 +105,16 @@ public final class Broker {
         try relock()   // MUST succeed on the success path or we throw (caller logs write_error, not write_ok)
     }
 
+    /// Client-facing result for a write that has ALREADY landed durably. Status is `ok` either way —
+    /// the write happened, and reporting failure would tell the client nothing changed when the
+    /// target did (M1). A non-nil `auditError` means the record didn't make it into the log; that
+    /// gap is surfaced explicitly rather than swallowed.
+    static func writeResult(auditError: Error?) -> [String: Any] {
+        var r: [String: Any] = ["phase": "result", "status": "ok"]
+        if let e = auditError { r["audit_error"] = "write succeeded but audit append failed: \(e)" }
+        return r
+    }
+
     func handle(_ fd: Int32) throws {
         let caller = peerUID(fd)
         let req = try recvMsg(fd)
@@ -174,9 +184,18 @@ public final class Broker {
             try auditAppend(["event": "write_error", "path": norm, "caller": caller, "err": "\(error)"], path: profile.audit)
             try sendMsg(fd, ["phase": "result", "status": "deny", "reason": "write failed"]); return
         }
-        try auditAppend(["event": "write_ok", "path": norm, "caller": caller,
-                         "content_sha256": doc.contentSha256], path: profile.audit)
-        try sendMsg(fd, ["phase": "result", "status": "ok"])
+        // The write is DURABLE from here on. An auditAppend failure must NOT propagate as a thrown
+        // error: handleGuarded would drop it, the client would see a spurious failure, and the log
+        // would carry neither write_ok nor write_error for a change that really happened (M1). So
+        // report success either way, and surface the audit gap explicitly instead of silently.
+        var auditErr: Error?
+        do {
+            try auditAppend(["event": "write_ok", "path": norm, "caller": caller,
+                             "content_sha256": doc.contentSha256], path: profile.audit)
+        } catch {
+            auditErr = error
+        }
+        try sendMsg(fd, Broker.writeResult(auditError: auditErr))
     }
 
     public func serve() throws {

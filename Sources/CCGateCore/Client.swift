@@ -33,7 +33,13 @@ public func runWrite(ctx: GateContext, path: String, content: Data) -> Int32 {
         }
         try sendMsg(fd, ["phase": "signature", "signature_b64": sig.base64EncodedString()])
         let result = try recvMsg(fd)
-        if result["status"] as? String == "ok" { print("\(ctx.profile.binaryName): wrote \(path)"); return 0 }
+        if result["status"] as? String == "ok" {
+            // The write landed; the broker still flags an audit gap so it isn't silent (see M1).
+            if let ae = result["audit_error"] as? String {
+                try? FileHandle.standardError.write(contentsOf: Data("\(ctx.profile.binaryName): WARNING \(ae)\n".utf8))
+            }
+            print("\(ctx.profile.binaryName): wrote \(path)"); return 0
+        }
         try? FileHandle.standardError.write(contentsOf: Data("\(ctx.profile.binaryName): denied (\(result["reason"] ?? ""))\n".utf8)); return 1
     } catch { return 1 }
 }
