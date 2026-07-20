@@ -7,6 +7,7 @@ final class MockPlatform: Platform {
     var calls: [String] = []
     var accountExists = false
     var daemon: (loaded: Bool, running: Bool, pid: Int?) = (false, false, nil)
+    var managedContents: String?   // last managed-settings JSON written (asserted on by hook-binary tests)
     func createServiceAccount(name: String) throws { calls.append("createAccount(\(name))"); accountExists = true }
     func deleteServiceAccount(name: String) throws { calls.append("deleteAccount(\(name))"); accountExists = false }
     func serviceAccountExists(name: String) -> Bool { accountExists }
@@ -14,7 +15,7 @@ final class MockPlatform: Platform {
     func activateDaemon() throws { calls.append("activateDaemon"); daemon = (true, true, 1234) }
     func bootoutDaemon() throws { calls.append("bootoutDaemon"); daemon = (false, false, nil) }
     func daemonState() -> (loaded: Bool, running: Bool, pid: Int?) { daemon }
-    func writeManagedSettings(_ json: String) throws { calls.append("writeManaged") }
+    func writeManagedSettings(_ json: String) throws { calls.append("writeManaged"); managedContents = json }
     func removeManagedSettings() throws { calls.append("removeManaged") }
     func makeImmutable(_ path: String) throws { calls.append("uchg(\(path))") }
     func clearImmutable(_ path: String) throws { calls.append("nouchg(\(path))") }

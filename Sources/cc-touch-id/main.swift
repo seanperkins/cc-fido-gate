@@ -101,7 +101,7 @@ case "enroll":
          print("cc-touch-id: enrolled. Next: sudo cc-touch-id activate"); exit(0) }
     catch { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id enroll failed: \(error)\n".utf8)); exit(1) }
 case "_render-plist": print(renderPlist(profile: touchIdProfile)); exit(0)
-case "_render-managed": print(renderManagedSettings(hookCmd: touchIdAppBinary + " hook")); exit(0)
+case "_render-managed": print(renderManagedSettings(hookCmd: touchIdProfile.hookBinary + " hook")); exit(0)
 case "_cc-version":   // record the Claude Code version for the install-time re-probe
     guard args.count >= 2 else { usage() }
     print(ccVersion(args[1])); exit(0)

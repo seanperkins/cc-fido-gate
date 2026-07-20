@@ -102,7 +102,7 @@ case "enroll":
          print("cc-fido: enrolled. Next: sudo cc-fido activate"); exit(0) }
     catch { try? FileHandle.standardError.write(contentsOf: Data("cc-fido enroll failed: \(error)\n".utf8)); exit(1) }
 case "_render-plist": print(renderPlist(profile: fidoProfile)); exit(0)
-case "_render-managed": print(renderManagedSettings(hookCmd: fidoProfile.codeDir + "/" + fidoProfile.binaryName + " hook")); exit(0)
+case "_render-managed": print(renderManagedSettings(hookCmd: fidoProfile.hookBinary + " hook")); exit(0)
 case "_cc-version":   // record the Claude Code version for the install-time re-probe
     guard args.count >= 2 else { usage() }
     print(ccVersion(args[1])); exit(0)

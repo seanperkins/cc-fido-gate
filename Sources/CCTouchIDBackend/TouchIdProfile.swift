@@ -11,7 +11,11 @@ public let touchIdProfile = GateProfile(
     plist: "/Library/LaunchDaemons/com.cc-touch-id-gate.brokerd.plist",
     daemonMatchPattern: "cc-touch-id daemon",
     claudeCodeDir: "/Library/Application Support/ClaudeCode",
-    managedSettings: "/Library/Application Support/ClaudeCode/managed-settings.json")
+    managedSettings: "/Library/Application Support/ClaudeCode/managed-settings.json",
+    // The hook signs with the Secure Enclave key → MUST be the entitled .app binary, not the plain
+    // daemon binary (which amfid-kills on SE access). Previously only install.sh's trailing
+    // `_render-managed` call got this right; `sudo cc-touch-id install` alone wrote a broken hook.
+    hookBinary: touchIdAppBinary)
 
 public func makeTouchIdContext(home: String) -> GateContext {
     GateContext(profile: touchIdProfile, ceremony: TouchIdCeremony(),
