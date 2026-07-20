@@ -23,10 +23,13 @@ func warnAncestors(_ path: String) {
     let w = checkAncestors(path, safeOwners: [0, cctouchidUIDOr(-1)])
     if !w.isEmpty { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: WARNING agent-writable ancestors (parent-swap residual, spec §2): \(w)\n".utf8)) }
 }
-func enrollSteps(_ plan: [[String]]) {
-    for a in plan where !runPrivileged(a) {
-        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: privileged step failed: \(a)\n".utf8)); exit(1)
-    }
+/// Runs the plan, returning the first step that failed (nil = all succeeded). Does NOT exit — the
+/// caller must roll back the partial state, because a plan that dies midway (e.g. chown OK, chmod
+/// fails) leaves the file service-account-owned, unlocked and unregistered: the user can no longer
+/// write it and the gate isn't protecting it either.
+func enrollSteps(_ plan: [[String]]) -> [String]? {
+    for a in plan where !runPrivileged(a) { return a }
+    return nil
 }
 // on registry-add failure, undo the lock so the file returns to its pre-enroll (usable) state.
 // Restores the CAPTURED original uid AND mode (not assumed ones), and reports whether every step succeeded.
@@ -192,7 +195,10 @@ case "enroll-file":
     // Lock FIRST, then register. This ordering fails SAFE: a registry failure leaves the file
     // locked-but-unregistered (over-protected, `cc-touch-id write` won't touch it) — never
     // registered-but-writable (which would advertise protection it doesn't have). We roll the lock back.
-    enrollSteps(planEnrollFile(path, mode: mode, profile: touchIdProfile))
+    if let failed = enrollSteps(planEnrollFile(path, mode: mode, profile: touchIdProfile)) {
+        rollbackFileLock(path, toUID: origUID, toMode: origMode)   // undo the steps that DID land
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: privileged step failed: \(failed)\n".utf8)); exit(1)
+    }
     if !runPrivileged(["-u", touchIdProfile.serviceAccount, touchIdProfile.codeDir + "/" + touchIdProfile.binaryName, "_registry-add", "file", path]) {
         rollbackFileLock(path, toUID: origUID, toMode: origMode)
         try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: registry add failed for \(path)\n".utf8)); exit(1)
@@ -202,7 +208,13 @@ case "enroll-dir":
     guard args.count >= 2 else { usage() }
     let path = (args[1] as NSString).standardizingPath
     warnAncestors(path)
-    enrollSteps(planEnrollDir(path, profile: touchIdProfile))
+    var dpre = stat(); let dHadStat = lstat(path, &dpre) == 0   // capture owner+mode BEFORE enroll
+    let dOrigUID = dHadStat ? dpre.st_uid : getuid()
+    let dOrigMode = dHadStat ? dpre.st_mode : mode_t(0o755)
+    if let failed = enrollSteps(planEnrollDir(path, profile: touchIdProfile)) {
+        rollbackFileLock(path, toUID: dOrigUID, toMode: dOrigMode)   // undo the steps that DID land
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: privileged step failed: \(failed)\n".utf8)); exit(1)
+    }
     if !runPrivileged(["-u", touchIdProfile.serviceAccount, touchIdProfile.codeDir + "/" + touchIdProfile.binaryName, "_registry-add", "dir", path]) {
         try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: registry add failed for \(path); dir remains \(touchIdProfile.serviceAccount)-owned — re-run enroll-dir to register\n".utf8)); exit(1)
     }
