@@ -87,6 +87,18 @@ NotebookEdit (M3), plus the per-task review fixes already committed. The below s
   `device not found` for the next arm; `sign()`'s existing retry (3× / 1.5s→3s backoff) would re-arm and
   recover. NOT observed in practice yet — theoretical, flagged because the concurrent design is a new trigger
   for that known transient. Fix only if it ever surfaces: a short settle delay or a gentler signer teardown.
+- **WYSIWYS: multi-line content is hard to read because newlines are escaped (2026-07-19, NEW).**
+  `escapeConfusables` escapes every scalar below 0x20, newlines included, so a multi-line write
+  renders as ONE long line of `<U+000A>` tokens — e.g. `PORT=8080<U+000A>DEBUG=false<U+000A>`. For a
+  30-line config that is genuinely hard for a human to read, which cuts against the point of showing
+  the content at all. Not a regression: it is the same escaping that makes the rendering injective,
+  and the c7db59b digest change actively depends on it (no newlines in fields ⇒ unambiguous line
+  structure ⇒ the `\n---\n` delimiters can't be forged ⇒ the digest is unnecessary when the body IS
+  the content). So this can NOT be fixed by simply relaxing the escape — that would reintroduce the
+  collision the digest used to backstop. A real fix needs different framing that survives literal
+  newlines in the body: length-prefixed fields (`content[22]:` …), or a delimiter that cannot appear
+  in escaped output. Worth doing if multi-line `write` targets become common; the approve path (Bash
+  commands, tool inputs) is mostly single-line and less affected.
 - **Task2 — binary content ≤ INLINE_MAX signs `content_mode:"inline"`** though the dialog body shows
   `[binary, N bytes]`. Injectivity holds (op/path/cwd/content_sha256 are separate signed fields; the
   dialog tail shows the full sha256). design.md's "path+cwd+op disambiguator" is satisfied structurally.
@@ -241,8 +253,10 @@ not yet exercised on hardware; drive it via the `/cc-fido:install` skill.
   prompt, no TTY); or (B) split the privileged registration into a separate shell-invoked
   `sudo cc-touch-id _register …` step; or (C) have `enroll` pre-flight a single up-front auth instead of
   a mid-flow prompt. Deferred — the `sudo -v` bridge is the current answer.
-- **`ns` domain-separator wired into the broker's challenge — RESOLVED IN CODE, PENDING HARDWARE
-  RE-VALIDATION (2026-07-19).** Both `Broker` call sites (`handleExecuteWrite` and `decideApprove`)
+- **`ns` domain-separator wired into the broker's challenge — RESOLVED AND HARDWARE-VERIFIED
+  (2026-07-19).** The daemon was rebuilt and reinstalled and `scripts/userrun/touchid_accept.sh`
+  passed green against it, so the changed challenge bytes are confirmed working end-to-end through a
+  real ceremony (custody, gated write, control-path denial, audit chain). Both `Broker` call sites (`handleExecuteWrite` and `decideApprove`)
   now pass `ns: profile.namespace`, so every challenge carries its product's domain separator.
   Blast radius is smaller than this entry originally assumed: `buildSignedDocument`/`canonicalBytes`
   are called **only** in `Broker.swift`, and the client signs the opaque `challenge: Data` it receives
