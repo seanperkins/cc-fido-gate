@@ -14,7 +14,7 @@ public func activate(platform: Platform, keyEnrolled: Bool, profile: GateProfile
 public func installOrchestration(platform: Platform, profile: GateProfile) throws {
     if !platform.serviceAccountExists(name: profile.serviceAccount) { try platform.createServiceAccount(name: profile.serviceAccount) }
     try platform.installDaemonPlist(renderPlist(profile: profile))
-    try platform.writeManagedSettings(renderManagedSettings(hookCmd: profile.hookBinary + " hook"))
+    try platform.writeManagedSettings(renderManagedSettings(hookCmd: profile.signingBinary + " hook"))
 }
 
 /// Full root-context install: dirs, binary, policy (render+validate+install), then installOrchestration.

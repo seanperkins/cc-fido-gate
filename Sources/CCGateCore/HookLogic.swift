@@ -1,7 +1,11 @@
 import Foundation
 
+/// The nudge names `signingBinary`, not `binaryName`: `write` runs a signing ceremony, and for a
+/// product whose signing role lives in an entitled bundle the bare name on PATH cannot complete one
+/// (it is killed on first use of the key). The full path is also correct for the plain-CLI case,
+/// where the binary may not be on PATH at all.
 func denyNudgeMsg(_ profile: GateProfile) -> String {
-    "\(profile.binaryName): this path is gate-locked. Use `\(profile.binaryName) write <path>` (content on stdin) to change it — a physical touch is required."
+    "\(profile.binaryName): this path is gate-locked. Use `\(profile.signingBinary) write <path>` (content on stdin) to change it — a physical touch is required."
 }
 func allowJSON(_ profile: GateProfile) -> String {
     #"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"\#(profile.binaryName): touch verified"}}"#

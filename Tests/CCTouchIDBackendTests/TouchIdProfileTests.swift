@@ -28,12 +28,12 @@ final class TouchIdProfileTests: XCTestCase {
         XCTAssertEqual(p.allowedSigners, "/var/cctouchid/allowed_signers")
         XCTAssertEqual(p.launchdLabel, "com.cc-touch-id-gate.brokerd")
     }
-    func testHookBinaryIsTheEntitledApp() {
+    func testSigningBinaryIsTheEntitledApp() {
         // The hook SIGNS with the Secure Enclave key, so it must run from the provisioned .app —
         // the plain daemon binary is amfid-killed on SE access. Regression guard for the install
         // path that used to write codeDir/binaryName into managed-settings.
-        XCTAssertEqual(touchIdProfile.hookBinary, touchIdAppBinary)
-        XCTAssertNotEqual(touchIdProfile.hookBinary,
+        XCTAssertEqual(touchIdProfile.signingBinary, touchIdAppBinary)
+        XCTAssertNotEqual(touchIdProfile.signingBinary,
                           touchIdProfile.codeDir + "/" + touchIdProfile.binaryName)
     }
     func testInstallWritesTheAppHookNotThePlainBinary() throws {

@@ -18,6 +18,20 @@ final class HookTests: XCTestCase {
     }
     func testPassthrough() { let r = run(ev("Write", ["file_path": "/Users/sean/proj/a.py"]), { _,_,_ in true }); XCTAssertEqual(r.0, 0); XCTAssertEqual(r.1, "") }
     func testDenyNudge() { let r = run(ev("Write", ["file_path": "/var/ccfido/target.txt"], "/"), { _,_,_ in true }); XCTAssertEqual(r.0, 2); XCTAssertTrue(r.2.contains("cc-fido write")) }
+    func testDenyNudgeNamesTheSigningBinaryNotTheBareName() {
+        // The nudge must name a binary that can actually run a signing ceremony. For a product whose
+        // signing role lives in an entitled bundle, the bare name on PATH cannot.
+        let appProfile = GateProfile(serviceAccount: "_svc", accountRealName: "rn", namespace: "ns",
+            keydir: "/var/k", runDir: "/var/r", sock: "/var/r/g.sock", daemonLogErr: "/var/k/e.err",
+            codeDir: "/opt/c", policy: "/opt/c/p.json", binaryName: "bin", displayName: "d",
+            launchdLabel: "lbl", plist: "/L/lbl.plist", daemonMatchPattern: "bin daemon",
+            claudeCodeDir: "/CC", managedSettings: "/CC/m.json",
+            signingBinary: "/opt/c/bin.app/Contents/MacOS/bin")
+        let msg = denyNudgeMsg(appProfile)
+        XCTAssertTrue(msg.contains("`/opt/c/bin.app/Contents/MacOS/bin write <path>`"),
+                      "nudge must name the signing binary, got: \(msg)")
+        XCTAssertFalse(msg.contains("`bin write"), "must not suggest the bare, non-signing name")
+    }
     func testGateAllows() { let r = run(ev("Write", ["file_path": "/Users/sean/proj/.env"]), { _,_,_ in true }); XCTAssertEqual(r.0, 0); XCTAssertTrue(r.1.contains("\"permissionDecision\":\"allow\"")) }
     func testGateDenies() { XCTAssertEqual(run(ev("Write", ["file_path": "/Users/sean/proj/.env"]), { _,_,_ in false }).0, 2) }
     func testBrokerErrorFailsClosed() { XCTAssertEqual(run(ev("Bash", ["command": "git push -f"], "/"), { _,_,_ in false }).0, 2) }

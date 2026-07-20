@@ -23,17 +23,17 @@ final class GateProfileTests: XCTestCase {
         XCTAssertEqual(p.controlDenylist, ["/var/kA/allowed_signers", "/var/kA/audit.log",
             "/var/kA/custody.json", "/var/kA/ceremony.lock", "/var/rA/g.sock", "/opt/cA/p.json"])
     }
-    func testHookBinaryDefaultsToCodeDirBinaryName() {
-        XCTAssertEqual(mk("A").hookBinary, "/opt/cA/binA")
+    func testSigningBinaryDefaultsToCodeDirBinaryName() {
+        XCTAssertEqual(mk("A").signingBinary, "/opt/cA/binA")
     }
-    func testHookBinaryOverrideIsUsed() {
+    func testSigningBinaryOverrideIsUsed() {
         let p = GateProfile(serviceAccount: "_svc", accountRealName: "rn", namespace: "ns",
             keydir: "/var/k", runDir: "/var/r", sock: "/var/r/g.sock", daemonLogErr: "/var/k/e.err",
             codeDir: "/opt/c", policy: "/opt/c/p.json", binaryName: "bin", displayName: "d",
             launchdLabel: "lbl", plist: "/L/lbl.plist", daemonMatchPattern: "bin daemon",
             claudeCodeDir: "/CC", managedSettings: "/CC/m.json",
-            hookBinary: "/opt/c/bin.app/Contents/MacOS/bin")
-        XCTAssertEqual(p.hookBinary, "/opt/c/bin.app/Contents/MacOS/bin")
+            signingBinary: "/opt/c/bin.app/Contents/MacOS/bin")
+        XCTAssertEqual(p.signingBinary, "/opt/c/bin.app/Contents/MacOS/bin")
     }
     func testInstallOrchestrationWritesTheProfilesHookBinary() throws {
         // Regression: installOrchestration hardcoded codeDir/binaryName, so `install` on an .app-based
@@ -43,7 +43,7 @@ final class GateProfileTests: XCTestCase {
             codeDir: "/opt/c", policy: "/opt/c/p.json", binaryName: "bin", displayName: "d",
             launchdLabel: "lbl", plist: "/L/lbl.plist", daemonMatchPattern: "bin daemon",
             claudeCodeDir: "/CC", managedSettings: "/CC/m.json",
-            hookBinary: "/opt/c/bin.app/Contents/MacOS/bin")
+            signingBinary: "/opt/c/bin.app/Contents/MacOS/bin")
         let plat = MockPlatform()
         try installOrchestration(platform: plat, profile: p)
         // Parse rather than substring-match: the rendered JSON escapes "/" as "\/".

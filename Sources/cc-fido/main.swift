@@ -23,10 +23,6 @@ func warnAncestors(_ path: String) {
     let w = checkAncestors(path, safeOwners: [0, ccfidoUIDOr(-1)])
     if !w.isEmpty { try? FileHandle.standardError.write(contentsOf: Data("cc-fido: WARNING agent-writable ancestors (parent-swap residual, spec §2): \(w)\n".utf8)) }
 }
-/// Runs the plan, returning the first step that failed (nil = all succeeded). Does NOT exit — the
-/// caller must roll back the partial state, because a plan that dies midway (e.g. chown OK, chmod
-/// fails) leaves the file service-account-owned, unlocked and unregistered: the user can no longer
-/// write it and the gate isn't protecting it either.
 /// Fail closed on a symlink target — see `isSymlink`. Must run BEFORE the pre-enroll lstat capture,
 /// because that capture would otherwise record the link's uid/mode as the rollback state.
 func refuseSymlink(_ path: String) {
@@ -35,6 +31,10 @@ func refuseSymlink(_ path: String) {
         "cc-fido: refusing to enroll a symlink: \(path)\n  chown/chmod/chflags follow it to the target — pass the resolved target path instead\n".utf8))
     exit(1)
 }
+/// Runs the plan, returning the first step that failed (nil = all succeeded). Does NOT exit — the
+/// caller must roll back the partial state, because a plan that dies midway (e.g. chown OK, chmod
+/// fails) leaves the file service-account-owned, unlocked and unregistered: the user can no longer
+/// write it and the gate isn't protecting it either.
 func enrollSteps(_ plan: [[String]]) -> [String]? {
     for a in plan where !runPrivileged(a) { return a }
     return nil
@@ -113,7 +113,7 @@ case "enroll":
          print("cc-fido: enrolled. Next: sudo cc-fido activate"); exit(0) }
     catch { try? FileHandle.standardError.write(contentsOf: Data("cc-fido enroll failed: \(error)\n".utf8)); exit(1) }
 case "_render-plist": print(renderPlist(profile: fidoProfile)); exit(0)
-case "_render-managed": print(renderManagedSettings(hookCmd: fidoProfile.hookBinary + " hook")); exit(0)
+case "_render-managed": print(renderManagedSettings(hookCmd: fidoProfile.signingBinary + " hook")); exit(0)
 case "_cc-version":   // record the Claude Code version for the install-time re-probe
     guard args.count >= 2 else { usage() }
     print(ccVersion(args[1])); exit(0)
