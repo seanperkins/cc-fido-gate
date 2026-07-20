@@ -111,13 +111,20 @@ NotebookEdit (M3), plus the per-task review fixes already committed. The below s
   (over-gate) direction; eyeball when tuning.
 
 ## Configurable install policy (2026-07-17 branch — tracked from final review)
-- **CLI-level executable tests missing (Important).** The spec's §Testing "CLI-level executable test
-  (stdout/stderr/exit)" for `_validate-policy`/`_render-policy` was downgraded to a manual smoke test
-  during implementation. The security-critical emit-on-valid-only / exit-1-no-stdout contract
-  (`Sources/cc-fido/main.swift` `_render-policy` case) has no automated coverage — only the USER-RUN
-  `task7_accept.sh` sections 6-7 and the install script's `sudo test -s` belt. Add a test that spawns
-  the built `cc-fido` and asserts exit code + empty-stdout for a blanket/bad policy and non-empty-stdout
-  for a valid one.
+- **CLI-level executable tests missing (Important) — RESOLVED (2026-07-20, `Tests/CCGateCoreTests/
+  CLIContractTests.swift`).** Spawns the BUILT binary and asserts on (exit code, stdout, stderr) for
+  BOTH products. Covers: the valid path emits substituted JSON and exits 0; eleven distinct rejection
+  paths (blanket/rooted blanket grant, invalid regex, missing key, malformed JSON, non-object root,
+  missing source, four bad-`$HOME` forms) each exit non-zero with **empty stdout** and a reason on
+  stderr; lint warnings go to stderr so stdout stays pure JSON; wrong arity is rejected rather than
+  partially rendered; and an end-to-end `set -o pipefail … | tee` reproduction of install.sh's actual
+  pipeline leaves the destination empty on rejection.
+  Correction to this entry's original text: there is **no `sudo test -s` belt on the rendered
+  policy** — the `test -s` calls in install.sh guard `allowed_signers`. Since `tee` truncates and
+  writes the live policy as bytes arrive, before `pipefail` can abort, "non-zero exit ⇒ nothing on
+  stdout" was the *only* protection, and it was untested.
+  Verified the tests have teeth: injecting an emit-before-validate bug into `_render-policy` (a
+  plausible refactor slip) fails 4 of the 6 tests, including the pipeline reproduction.
 - **Two untested guard branches (Minor).** `renderPolicy`'s non-absolute-but-nonempty `$HOME` rejection
   and its exists-but-invalid-JSON source rejection are verified correct by reading but have no test
   (existing tests hit banned/empty home + missing file only).
