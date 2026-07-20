@@ -7,7 +7,7 @@ let touchCtx = makeTouchIdContext(home: NSHomeDirectory())
 
 let args = Array(CommandLine.arguments.dropFirst())
 func usage() -> Never {
-    FileHandle.standardError.write(Data("usage: cc-touch-id {daemon|hook|write <path>|enroll|install [--policy PATH]|activate|uninstall|enroll-file <path> [mode]|enroll-dir <path>|status [--json]|_validate-policy <path>|_render-policy <src> <home>}\n".utf8))
+    try? FileHandle.standardError.write(contentsOf: Data("usage: cc-touch-id {daemon|hook|write <path>|enroll|install [--policy PATH]|activate|uninstall|enroll-file <path> [mode]|enroll-dir <path>|status [--json]|_validate-policy <path>|_render-policy <src> <home>}\n".utf8))
     exit(2)
 }
 
@@ -21,11 +21,11 @@ func installRepoPolicyDefault() -> String { touchIdProfile.codeDir + "/policy.js
 func cctouchidUIDOr(_ fallback: Int) -> Int { getpwnam(touchIdProfile.serviceAccount).map { Int($0.pointee.pw_uid) } ?? fallback }
 func warnAncestors(_ path: String) {
     let w = checkAncestors(path, safeOwners: [0, cctouchidUIDOr(-1)])
-    if !w.isEmpty { FileHandle.standardError.write(Data("cc-touch-id: WARNING agent-writable ancestors (parent-swap residual, spec §2): \(w)\n".utf8)) }
+    if !w.isEmpty { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: WARNING agent-writable ancestors (parent-swap residual, spec §2): \(w)\n".utf8)) }
 }
 func enrollSteps(_ plan: [[String]]) {
     for a in plan where !runPrivileged(a) {
-        FileHandle.standardError.write(Data("cc-touch-id: privileged step failed: \(a)\n".utf8)); exit(1)
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: privileged step failed: \(a)\n".utf8)); exit(1)
     }
 }
 // on registry-add failure, undo the lock so the file returns to its pre-enroll (usable) state.
@@ -35,9 +35,9 @@ func rollbackFileLock(_ path: String, toUID uid: UInt32, toMode mode: mode_t) {
     let chowned = runPrivileged(["/usr/sbin/chown", String(uid), path])
     let chmoded = runPrivileged(["/bin/chmod", String(mode & 0o7777, radix: 8), path])
     if unlocked && chowned && chmoded {
-        FileHandle.standardError.write(Data("cc-touch-id: rolled back lock on \(path) (uid+mode restored)\n".utf8))
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: rolled back lock on \(path) (uid+mode restored)\n".utf8))
     } else {
-        FileHandle.standardError.write(Data("cc-touch-id: ROLLBACK INCOMPLETE on \(path) (nouchg=\(unlocked) chown=\(chowned) chmod=\(chmoded)) — fix manually\n".utf8))
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: ROLLBACK INCOMPLETE on \(path) (nouchg=\(unlocked) chown=\(chowned) chmod=\(chmoded)) — fix manually\n".utf8))
     }
 }
 
@@ -52,7 +52,7 @@ case "write":
     exit(runWrite(ctx: touchCtx, path: args[1], content: FileHandle.standardInput.readDataToEndOfFile()))
 case "install":
     guard getuid() == 0 else {
-        FileHandle.standardError.write(Data("cc-touch-id install: must run as root — use: sudo cc-touch-id install\n".utf8)); exit(1)
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id install: must run as root — use: sudo cc-touch-id install\n".utf8)); exit(1)
     }
     let policySrc = flagValue("--policy", in: args) ?? (installRepoPolicyDefault())
     let home = realLoginHome()   // login user's home (from SUDO_USER), NOT root's /var/root
@@ -62,10 +62,10 @@ case "install":
                            platform: MacOSPlatform(profile: installCtx.profile), profile: installCtx.profile)
         print("cc-touch-id: prereqs installed. Next: cc-touch-id enroll  (then: sudo cc-touch-id activate)")
         exit(0)
-    } catch { FileHandle.standardError.write(Data("cc-touch-id install failed: \(error)\n".utf8)); exit(1) }
+    } catch { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id install failed: \(error)\n".utf8)); exit(1) }
 case "activate":
     guard getuid() == 0 else {
-        FileHandle.standardError.write(Data("cc-touch-id activate: must run as root — use: sudo cc-touch-id activate\n".utf8)); exit(1)
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id activate: must run as root — use: sudo cc-touch-id activate\n".utf8)); exit(1)
     }
     let activateCtx = makeTouchIdContext(home: realLoginHome())
     let enrolled = (try? String(contentsOfFile: activateCtx.profile.allowedSigners, encoding: .utf8))?.isEmpty == false
@@ -76,10 +76,10 @@ case "activate":
         let running = platform.daemonState().running
         print("cc-touch-id: daemon activated — socket \(running ? "reachable" : "NOT reachable (re-run activate)")")
         exit(running ? 0 : 1)
-    } catch { FileHandle.standardError.write(Data("cc-touch-id activate failed: \(error)\n".utf8)); exit(1) }
+    } catch { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id activate failed: \(error)\n".utf8)); exit(1) }
 case "uninstall":
     guard getuid() == 0 else {
-        FileHandle.standardError.write(Data("cc-touch-id uninstall: must run as root — use: sudo cc-touch-id uninstall\n".utf8)); exit(1)
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id uninstall: must run as root — use: sudo cc-touch-id uninstall\n".utf8)); exit(1)
     }
     let uninstallHome = realLoginHome()
     let uninstallCtx = makeTouchIdContext(home: uninstallHome)
@@ -93,13 +93,13 @@ case "uninstall":
                       enroller: uninstallCtx.enroller, profile: uninstallCtx.profile)
         let r = gatherStatus(platform: platform, home: uninstallHome, enroller: uninstallCtx.enroller, profile: uninstallCtx.profile)
         print("cc-touch-id: uninstalled — status now \(r.rollup)"); exit(0)
-    } catch { FileHandle.standardError.write(Data("cc-touch-id uninstall failed: \(error)\n".utf8)); exit(1) }
+    } catch { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id uninstall failed: \(error)\n".utf8)); exit(1) }
 case "enroll":
-    if getuid() == 0 { FileHandle.standardError.write(Data("cc-touch-id enroll: run as your login user (not sudo) — it needs your key + a touch\n".utf8)); exit(1) }
+    if getuid() == 0 { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id enroll: run as your login user (not sudo) — it needs your key + a touch\n".utf8)); exit(1) }
     let home = realLoginHome()
     do { try runEnroll(home: home, keys: 1, enroller: TouchIdEnroller(), profile: touchIdProfile)
          print("cc-touch-id: enrolled. Next: sudo cc-touch-id activate"); exit(0) }
-    catch { FileHandle.standardError.write(Data("cc-touch-id enroll failed: \(error)\n".utf8)); exit(1) }
+    catch { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id enroll failed: \(error)\n".utf8)); exit(1) }
 case "_render-plist": print(renderPlist(profile: touchIdProfile)); exit(0)
 case "_render-managed": print(renderManagedSettings(hookCmd: touchIdAppBinary + " hook")); exit(0)
 case "_cc-version":   // record the Claude Code version for the install-time re-probe
@@ -115,26 +115,26 @@ case "_presence-test":
         if TouchIdVerifier(allowedSigners: touchIdProfile.allowedSigners).verify(challenge: nonce, signature: sig) {
             print("PASS: Touch ID-required key verified"); exit(0)
         }
-        FileHandle.standardError.write(Data("FAIL: signature did not verify\n".utf8)); exit(1)
-    } catch { FileHandle.standardError.write(Data("FAIL: \(error)\n".utf8)); exit(1) }
+        try? FileHandle.standardError.write(contentsOf: Data("FAIL: signature did not verify\n".utf8)); exit(1)
+    } catch { try? FileHandle.standardError.write(contentsOf: Data("FAIL: \(error)\n".utf8)); exit(1) }
 case "_delete-key":
     _ = seDeleteKey(tag: touchIdKeyTag); exit(0)
 case "_verify-audit":   // runs AS the service account so it can read the 0600 service-account-owned audit log
     if auditVerifyChain(path: touchIdProfile.audit) { print("audit chain OK"); exit(0) }
-    FileHandle.standardError.write(Data("audit chain BROKEN\n".utf8)); exit(1)
+    try? FileHandle.standardError.write(contentsOf: Data("audit chain BROKEN\n".utf8)); exit(1)
 case "_validate-policy":   // read-only: parse + summary + lint. exactly one path.
     guard args.count == 2 else { usage() }
     do {
         let policy = try Policy.fromFile(args[1])
         let (fatal, warnings) = policy.lint()
-        for w in warnings { FileHandle.standardError.write(Data("cc-touch-id: WARNING \(w)\n".utf8)) }
+        for w in warnings { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: WARNING \(w)\n".utf8)) }
         guard fatal.isEmpty else {
-            for f in fatal { FileHandle.standardError.write(Data("cc-touch-id: FATAL \(f)\n".utf8)) }
+            for f in fatal { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: FATAL \(f)\n".utf8)) }
             exit(1)
         }
         print(policy.summary()); exit(0)
     } catch {
-        FileHandle.standardError.write(Data("cc-touch-id: invalid policy: \(error)\n".utf8)); exit(1)
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: invalid policy: \(error)\n".utf8)); exit(1)
     }
 case "_render-policy":   // substitute __HOME__, guard home, validate + lint, emit JSON on success ONLY.
     guard args.count == 3 else { usage() }
@@ -145,14 +145,14 @@ case "_render-policy":   // substitute __HOME__, guard home, validate + lint, em
         }
         let policy = try Policy.fromDict(obj)
         let (fatal, warnings) = policy.lint()
-        for w in warnings { FileHandle.standardError.write(Data("cc-touch-id: WARNING \(w)\n".utf8)) }
+        for w in warnings { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: WARNING \(w)\n".utf8)) }
         guard fatal.isEmpty else {
-            for f in fatal { FileHandle.standardError.write(Data("cc-touch-id: FATAL \(f)\n".utf8)) }
+            for f in fatal { try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: FATAL \(f)\n".utf8)) }
             exit(1)   // NO stdout — a downstream `tee` writes nothing, live policy untouched
         }
-        FileHandle.standardOutput.write(rendered); exit(0)   // emit only when valid
+        try? FileHandle.standardOutput.write(contentsOf: rendered); exit(0)   // emit only when valid
     } catch {
-        FileHandle.standardError.write(Data("cc-touch-id: render failed: \(error)\n".utf8)); exit(1)
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: render failed: \(error)\n".utf8)); exit(1)
     }
 // runs AS the service account (via `sudo -u _cctouchid`) so it can write the 0600 service-account-owned custody.json:
 case "_registry-add":
@@ -162,7 +162,7 @@ case "_registry-add":
                                 dir: args[1] == "dir" ? args[2] : nil, path: touchIdProfile.custody)
         exit(0)
     } catch {
-        FileHandle.standardError.write(Data("cc-touch-id: registry add failed: \(error)\n".utf8)); exit(1)
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: registry add failed: \(error)\n".utf8)); exit(1)
     }
 case "status":
     let statusHome = realLoginHome()
@@ -195,7 +195,7 @@ case "enroll-file":
     enrollSteps(planEnrollFile(path, mode: mode, profile: touchIdProfile))
     if !runPrivileged(["-u", touchIdProfile.serviceAccount, touchIdProfile.codeDir + "/" + touchIdProfile.binaryName, "_registry-add", "file", path]) {
         rollbackFileLock(path, toUID: origUID, toMode: origMode)
-        FileHandle.standardError.write(Data("cc-touch-id: registry add failed for \(path)\n".utf8)); exit(1)
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: registry add failed for \(path)\n".utf8)); exit(1)
     }
     print("cc-touch-id: enrolled + registered file \(path)"); exit(0)
 case "enroll-dir":
@@ -204,9 +204,9 @@ case "enroll-dir":
     warnAncestors(path)
     enrollSteps(planEnrollDir(path, profile: touchIdProfile))
     if !runPrivileged(["-u", touchIdProfile.serviceAccount, touchIdProfile.codeDir + "/" + touchIdProfile.binaryName, "_registry-add", "dir", path]) {
-        FileHandle.standardError.write(Data("cc-touch-id: registry add failed for \(path); dir remains \(touchIdProfile.serviceAccount)-owned — re-run enroll-dir to register\n".utf8)); exit(1)
+        try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: registry add failed for \(path); dir remains \(touchIdProfile.serviceAccount)-owned — re-run enroll-dir to register\n".utf8)); exit(1)
     }
     print("cc-touch-id: enrolled + registered dir \(path)"); exit(0)
 default:
-    FileHandle.standardError.write(Data("cc-touch-id: unknown command \(cmd)\n".utf8)); exit(2)
+    try? FileHandle.standardError.write(contentsOf: Data("cc-touch-id: unknown command \(cmd)\n".utf8)); exit(2)
 }

@@ -23,19 +23,19 @@ public func decideAndEmit(event: [String: Any], policy: Policy, profile: GatePro
     let cwd = event["cwd"] as? String ?? ""
     switch policy.decide(tool: tool, toolInput: input, cwd: cwd) {
     case .pass: return 0
-    case .denyNudge: err.write(Data((denyNudgeMsg(profile) + "\n").utf8)); return 2
+    case .denyNudge: try? err.write(contentsOf: Data((denyNudgeMsg(profile) + "\n").utf8)); return 2
     case .gate:
-        if approve(tool, input, cwd) { out.write(Data((allowJSON(profile) + "\n").utf8)); return 0 }
-        err.write(Data("\(profile.binaryName): touch not provided — denied\n".utf8)); return 2
+        if approve(tool, input, cwd) { try? out.write(contentsOf: Data((allowJSON(profile) + "\n").utf8)); return 0 }
+        try? err.write(contentsOf: Data("\(profile.binaryName): touch not provided — denied\n".utf8)); return 2
     }
 }
 public func hookMain(ctx: GateContext) -> Never {
     let data = FileHandle.standardInput.readDataToEndOfFile()
     guard let event = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-        FileHandle.standardError.write(Data("\(ctx.profile.binaryName): unreadable payload — failing closed\n".utf8)); exit(2)
+        try? FileHandle.standardError.write(contentsOf: Data("\(ctx.profile.binaryName): unreadable payload — failing closed\n".utf8)); exit(2)
     }
     guard let policy = try? Policy.fromFile(ctx.profile.policy) else {
-        FileHandle.standardError.write(Data("\(ctx.profile.binaryName): no policy — failing closed\n".utf8)); exit(2)
+        try? FileHandle.standardError.write(contentsOf: Data("\(ctx.profile.binaryName): no policy — failing closed\n".utf8)); exit(2)
     }
     exit(decideAndEmit(event: event, policy: policy, profile: ctx.profile, out: FileHandle.standardOutput,
                        err: FileHandle.standardError) { t, i, c in runApprove(ctx: ctx, tool: t, toolInput: i, cwd: c) })

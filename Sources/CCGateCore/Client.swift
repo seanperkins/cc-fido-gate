@@ -17,7 +17,7 @@ func connectSock(_ path: String) -> Int32 {
 
 public func runWrite(ctx: GateContext, path: String, content: Data) -> Int32 {
     let fd = connectSock(ctx.profile.sock)
-    guard fd >= 0 else { FileHandle.standardError.write(Data("\(ctx.profile.binaryName): broker unreachable\n".utf8)); return 1 }
+    guard fd >= 0 else { try? FileHandle.standardError.write(contentsOf: Data("\(ctx.profile.binaryName): broker unreachable\n".utf8)); return 1 }
     defer { close(fd) }
     do {
         try sendMsg(fd, ["op": "execute-write", "path": path,
@@ -26,7 +26,7 @@ public func runWrite(ctx: GateContext, path: String, content: Data) -> Int32 {
         guard msg["phase"] as? String == "challenge", let human = msg["human_rendering"] as? String,
               let chB64 = msg["challenge_b64"] as? String, let challenge = Data(base64Encoded: chB64) else {
             let reason = (msg["reason"] as? String) ?? "protocol error"
-            FileHandle.standardError.write(Data("\(ctx.profile.binaryName): \(reason)\n".utf8)); return 1
+            try? FileHandle.standardError.write(contentsOf: Data("\(ctx.profile.binaryName): \(reason)\n".utf8)); return 1
         }
         guard let sig = ctx.ceremony.confirmAndSign(rendering: human, challenge: challenge, displayName: ctx.profile.displayName) else {
             try sendMsg(fd, ["phase": "abort", "reason": "denied"]); return 1
@@ -34,7 +34,7 @@ public func runWrite(ctx: GateContext, path: String, content: Data) -> Int32 {
         try sendMsg(fd, ["phase": "signature", "signature_b64": sig.base64EncodedString()])
         let result = try recvMsg(fd)
         if result["status"] as? String == "ok" { print("\(ctx.profile.binaryName): wrote \(path)"); return 0 }
-        FileHandle.standardError.write(Data("\(ctx.profile.binaryName): denied (\(result["reason"] ?? ""))\n".utf8)); return 1
+        try? FileHandle.standardError.write(contentsOf: Data("\(ctx.profile.binaryName): denied (\(result["reason"] ?? ""))\n".utf8)); return 1
     } catch { return 1 }
 }
 
